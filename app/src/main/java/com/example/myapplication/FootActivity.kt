@@ -26,6 +26,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import com.example.myapplication.ui.theme.MyApplicationTheme
+import kotlinx.coroutines.*
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.*
@@ -40,6 +41,9 @@ class FootActivity : ComponentActivity() {
     private lateinit var leftColorState: MutableState<String>
     private lateinit var isConnectedState: MutableState<Boolean>
     private lateinit var connectedDeviceNameState: MutableState<String>
+    private lateinit var weightTextState: MutableState<String>
+    private var periodicJob: Job? = null
+    private var writeCharacteristic: BluetoothGattCharacteristic? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,9 +75,11 @@ class FootActivity : ComponentActivity() {
                 val rightColor = remember { mutableStateOf("BLUE") }
                 val isConnected = remember { mutableStateOf(false) }
                 val connectedDeviceName = remember { mutableStateOf("") }
+                val weightText = remember { mutableStateOf("-- g") }
                 leftColorState = leftColor
                 isConnectedState = isConnected
                 connectedDeviceNameState = connectedDeviceName
+                weightTextState = weightText
 
                 Column(modifier = Modifier.fillMaxSize()) {
                     Box(modifier = Modifier.fillMaxWidth()) {
@@ -94,6 +100,14 @@ class FootActivity : ComponentActivity() {
                         else
                             "🔄 BLE 연결 대기 중...",
                         color = if (isConnected.value) Color.Green else Color.Gray,
+                        modifier = Modifier
+                            .padding(top = 16.dp)
+                            .align(Alignment.CenterHorizontally)
+                    )
+
+                    Text(
+                        text = "현재 무게: ${weightText.value}",
+                        style = MaterialTheme.typography.headlineMedium,
                         modifier = Modifier
                             .padding(top = 16.dp)
                             .align(Alignment.CenterHorizontally)
@@ -150,21 +164,19 @@ class FootActivity : ComponentActivity() {
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             val service = gatt.getService(serviceUUID)
-            val writeChar = service.getCharacteristic(writeCharUUID)
+            writeCharacteristic = service.getCharacteristic(writeCharUUID)
             val notifyChar = service.getCharacteristic(notifyCharUUID)
 
             if (ActivityCompat.checkSelfPermission(this@FootActivity, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                 return
             }
 
-            writeChar.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            writeChar.value = "measure".toByteArray()
-            gatt.writeCharacteristic(writeChar)
-
             gatt.setCharacteristicNotification(notifyChar, true)
             val descriptor = notifyChar.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
             descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
             gatt.writeDescriptor(descriptor)
+
+            startPeriodicMeasure(gatt)
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
@@ -175,7 +187,31 @@ class FootActivity : ComponentActivity() {
                 println("📥 수신된 무게: $weight g")
 
                 leftColorState.value = if (weight > 5f) "GREEN" else "RED"
+                weightTextState.value = String.format("%.1f g", weight)
             }
+        }
+    }
+
+    private fun startPeriodicMeasure(gatt: BluetoothGatt) {
+        periodicJob?.cancel()
+        periodicJob = CoroutineScope(Dispatchers.IO).launch {
+            while (isActive) {
+                delay(1000)
+                if (ActivityCompat.checkSelfPermission(this@FootActivity, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) continue
+                writeCharacteristic?.let {
+                    it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                    it.value = "measure".toByteArray()
+                    gatt.writeCharacteristic(it)
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        periodicJob?.cancel()
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+            bluetoothGatt?.close()
         }
     }
 }
