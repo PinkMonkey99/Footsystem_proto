@@ -1,105 +1,242 @@
 package com.example.myapplication
 
+import android.Manifest
+import android.bluetooth.*
+import android.bluetooth.le.*
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-//import androidx.compose.material3.Scaffold
-//import androidx.compose.material3.CenterAlignedTopAppBar
-//import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import com.example.myapplication.ui.theme.MyApplicationTheme
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.*
 
-// ⚙️ FootActivity: 족압 측정 화면을 보여 주는 Activity
 class FootActivity : ComponentActivity() {
+    private var bluetoothGatt: BluetoothGatt? = null
+    private val espDeviceName = "ESP32-S3 BLE Scale"
+    private val serviceUUID = UUID.fromString("12345678-1234-5678-1234-56789abcdef0")
+    private val notifyCharUUID = UUID.fromString("abcdef01-1234-5678-1234-56789abcdef0")
+    private val writeCharUUID = UUID.fromString("abcdef02-1234-5678-1234-56789abcdef0")
+
+    private lateinit var leftColorState: MutableState<String>
+    private lateinit var isConnectedState: MutableState<Boolean>
+    private lateinit var connectedDeviceNameState: MutableState<String>
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val permissionsLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { permissions ->
+            if (permissions.values.all { it }) {
+                startBleScan()
+            }
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissionsLauncher.launch(
+                arrayOf(
+                    Manifest.permission.BLUETOOTH_SCAN,
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        } else {
+            startBleScan()
+        }
+
         setContent {
             MyApplicationTheme {
-                // 전체 화면을 감싸는 Box
-                Box(modifier = Modifier.fillMaxSize()) {
-                    // ✅ 1. 왼쪽 상단에 뒤로 가기 버튼 배치
-                    IconButton(
-                        onClick = { finish() }, // 액티 비티 종료 = 이전 화면 으로 돌아감
-                        modifier = Modifier
-                            .padding(start = 16.dp, top = 48.dp)
-                            .align(Alignment.TopStart) // 왼쪽 위 정렬
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "뒤로 가기"
-                        )
+                val leftColor = remember { mutableStateOf("RED") }
+                val rightColor = remember { mutableStateOf("BLUE") }
+                val isConnected = remember { mutableStateOf(false) }
+                val connectedDeviceName = remember { mutableStateOf("") }
+                leftColorState = leftColor
+                isConnectedState = isConnected
+                connectedDeviceNameState = connectedDeviceName
+
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        IconButton(
+                            onClick = { finish() },
+                            modifier = Modifier.padding(start = 16.dp, top = 48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "뒤로 가기"
+                            )
+                        }
                     }
-                    // ✅ 2. 센서 및 발 이미지 화면
-                    FootPressureScreen()
+
+                    Text(
+                        text = if (isConnected.value)
+                            "✅ 연결됨: ${connectedDeviceName.value}"
+                        else
+                            "🔄 BLE 연결 대기 중...",
+                        color = if (isConnected.value) Color.Green else Color.Gray,
+                        modifier = Modifier
+                            .padding(top = 16.dp)
+                            .align(Alignment.CenterHorizontally)
+                    )
+
+                    Text("왼발 센서 색상", modifier = Modifier.padding(top = 32.dp, bottom = 4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        Button(onClick = { leftColor.value = "RED" }) { Text("RED") }
+                        Button(onClick = { leftColor.value = "GREEN" }) { Text("GREEN") }
+                        Button(onClick = { leftColor.value = "BLUE" }) { Text("BLUE") }
+                    }
+
+                    FootPressureScreen(leftColor = leftColor.value, rightColor = rightColor.value)
                 }
             }
         }
     }
+
+    private fun startBleScan() {
+        val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
+
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+
+        val scanner = bluetoothAdapter?.bluetoothLeScanner ?: return
+        val scanCallback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                if (result.device.name == espDeviceName) {
+                    if (ActivityCompat.checkSelfPermission(this@FootActivity, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) return
+                    scanner.stopScan(this)
+                    if (ActivityCompat.checkSelfPermission(this@FootActivity, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                        return
+                    }
+                    connectedDeviceNameState.value = result.device.name ?: "알 수 없음"
+                    bluetoothGatt = result.device.connectGatt(this@FootActivity, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                }
+            }
+        }
+        scanner.startScan(scanCallback)
+    }
+
+    private val gattCallback = object : BluetoothGattCallback() {
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                if (ActivityCompat.checkSelfPermission(this@FootActivity, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return
+                isConnectedState.value = true
+                gatt.discoverServices()
+            }
+        }
+
+        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            val service = gatt.getService(serviceUUID)
+            val writeChar = service.getCharacteristic(writeCharUUID)
+            val notifyChar = service.getCharacteristic(notifyCharUUID)
+
+            if (ActivityCompat.checkSelfPermission(this@FootActivity, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                return
+            }
+
+            writeChar.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            writeChar.value = "measure".toByteArray()
+            gatt.writeCharacteristic(writeChar)
+
+            gatt.setCharacteristicNotification(notifyChar, true)
+            val descriptor = notifyChar.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+            descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+            gatt.writeDescriptor(descriptor)
+        }
+
+        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            if (characteristic.uuid == notifyCharUUID) {
+                val weight = ByteBuffer.wrap(characteristic.value)
+                    .order(ByteOrder.LITTLE_ENDIAN).float
+
+                println("📥 수신된 무게: $weight g")
+
+                leftColorState.value = if (weight > 5f) "GREEN" else "RED"
+            }
+        }
+    }
 }
-// 🦶 발 이미지 + 센서 5개를 화면에 보여 주는 UI 함수
+
 @Composable
-fun FootPressureScreen() {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center // 전체를 가운데 정렬
+fun FootPressureScreen(leftColor: String, rightColor: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.SpaceEvenly,
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 1. 발 이미지 표시
-        Image(
-            painter = painterResource(id = R.drawable.foot), // res/drawable/foot.png
-            contentDescription = "Foot Image",                // 접근성 설명용
-            contentScale = ContentScale.Fit,                  // 이미지 사이즈 맞추기
-            modifier = Modifier.size(450.dp)                  // 이미지 크기
-        )
-        // 2. 센서 위치에 색상 동그 라미 표시
-        // 각각 Box()로 하나씩 만들고, offset 으로 위치 조절
-        // 센서 1 - 빨간색 (왼쪽 아래)
         Box(
-            modifier = Modifier
-                .offset(x = (-55).dp, y = (-30).dp)            // 위치 조정
-                .size(30.dp)                                   // 크기
-                .background(Color.Red, shape = CircleShape)    // 색상 + 동그 라미
-        )
-        // 센서 2 - 초록색 (중간 위)
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.foot3_l),
+                contentDescription = "Left Foot",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.size(550.dp).offset(y = 45.dp)
+            )
+            Box(
+                modifier = Modifier
+                    .offset(x = 50.dp, y = 65.dp)
+                    .size(30.dp)
+                    .background(
+                        color = when (leftColor) {
+                            "GREEN" -> Color.Green
+                            "BLUE" -> Color.Blue
+                            else -> Color.Red
+                        },
+                        shape = CircleShape
+                    )
+            )
+        }
+
         Box(
-            modifier = Modifier
-                .offset(x = (-15).dp, y = (-60).dp)
-                .size(30.dp)
-                .background(Color.Green, shape = CircleShape)
-        )
-        // 센서 3 - 노란색 (오른쪽 중간)
-        Box(
-            modifier = Modifier
-                .offset(x = (35).dp, y = (-55).dp)
-                .size(30.dp)
-                .background(Color.Yellow, shape = CircleShape)
-        )
-        // 센서 4 - 파란색 (왼쪽 위)
-        Box(
-            modifier = Modifier
-                .offset(x = (-25).dp, y = (45).dp)
-                .size(30.dp)
-                .background(Color.Blue, shape = CircleShape)
-        )
-        // 센서 5 - 분홍색 (오른쪽 아래)
-        Box(
-            modifier = Modifier
-                .offset(x = (-2).dp, y = (130).dp)
-                .size(30.dp)
-                .background(Color.Magenta, shape = CircleShape)
-        )
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.foot3_r),
+                contentDescription = "Right Foot",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.size(550.dp).offset(y = -45.dp)
+            )
+            Box(
+                modifier = Modifier
+                    .offset(x = 50.dp, y = -60.dp)
+                    .size(30.dp)
+                    .background(
+                        color = when (rightColor) {
+                            "GREEN" -> Color.Green
+                            "BLUE" -> Color.Blue
+                            else -> Color.Red
+                        },
+                        shape = CircleShape
+                    )
+            )
+        }
     }
 }
