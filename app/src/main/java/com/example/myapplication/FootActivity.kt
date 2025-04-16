@@ -10,18 +10,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
@@ -30,6 +26,8 @@ import kotlinx.coroutines.*
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.*
+import android.util.Log
+import androidx.compose.ui.graphics.Color
 
 class FootActivity : ComponentActivity() {
     private var bluetoothGatt: BluetoothGatt? = null
@@ -38,10 +36,8 @@ class FootActivity : ComponentActivity() {
     private val notifyCharUUID = UUID.fromString("abcdef01-1234-5678-1234-56789abcdef0")
     private val writeCharUUID = UUID.fromString("abcdef02-1234-5678-1234-56789abcdef0")
 
-    private lateinit var leftColorState: MutableState<String>
     private lateinit var isConnectedState: MutableState<Boolean>
     private lateinit var connectedDeviceNameState: MutableState<String>
-    private lateinit var weightTextState: MutableState<String>
     private var periodicJob: Job? = null
     private var writeCharacteristic: BluetoothGattCharacteristic? = null
 
@@ -71,21 +67,16 @@ class FootActivity : ComponentActivity() {
 
         setContent {
             MyApplicationTheme {
-                val leftColor = remember { mutableStateOf("RED") }
-                val rightColor = remember { mutableStateOf("BLUE") }
                 val isConnected = remember { mutableStateOf(false) }
                 val connectedDeviceName = remember { mutableStateOf("") }
-                val weightText = remember { mutableStateOf("-- g") }
-                leftColorState = leftColor
                 isConnectedState = isConnected
                 connectedDeviceNameState = connectedDeviceName
-                weightTextState = weightText
 
                 Column(modifier = Modifier.fillMaxSize()) {
                     Box(modifier = Modifier.fillMaxWidth()) {
                         IconButton(
                             onClick = { finish() },
-                            modifier = Modifier.padding(start = 16.dp, top = 48.dp)
+                            modifier = Modifier.padding(start = 16.dp, top = 16.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -105,25 +96,9 @@ class FootActivity : ComponentActivity() {
                             .align(Alignment.CenterHorizontally)
                     )
 
-                    Text(
-                        text = "현재 무게: ${weightText.value}",
-                        style = MaterialTheme.typography.headlineMedium,
-                        modifier = Modifier
-                            .padding(top = 16.dp)
-                            .align(Alignment.CenterHorizontally)
-                    )
+                    Spacer(modifier = Modifier.height(32.dp))
 
-                    Text("왼발 센서 색상", modifier = Modifier.padding(top = 32.dp, bottom = 4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        Button(onClick = { leftColor.value = "RED" }) { Text("RED") }
-                        Button(onClick = { leftColor.value = "GREEN" }) { Text("GREEN") }
-                        Button(onClick = { leftColor.value = "BLUE" }) { Text("BLUE") }
-                    }
-
-                    FootPressureScreen(leftColor = leftColor.value, rightColor = rightColor.value)
+                    FootImageDisplay()
                 }
             }
         }
@@ -180,15 +155,7 @@ class FootActivity : ComponentActivity() {
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            if (characteristic.uuid == notifyCharUUID) {
-                val weight = ByteBuffer.wrap(characteristic.value)
-                    .order(ByteOrder.LITTLE_ENDIAN).float
-
-                println("📥 수신된 무게: $weight g")
-
-                leftColorState.value = if (weight > 5f) "GREEN" else "RED"
-                weightTextState.value = String.format("%.1f g", weight)
-            }
+            // 무게 수신 이벤트 처리 생략됨
         }
     }
 
@@ -199,6 +166,7 @@ class FootActivity : ComponentActivity() {
                 delay(1000)
                 if (ActivityCompat.checkSelfPermission(this@FootActivity, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) continue
                 writeCharacteristic?.let {
+                    Log.d("BLE", "📤 Android → ESP32: measure 전송 시도")
                     it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                     it.value = "measure".toByteArray()
                     gatt.writeCharacteristic(it)
@@ -217,62 +185,20 @@ class FootActivity : ComponentActivity() {
 }
 
 @Composable
-fun FootPressureScreen(leftColor: String, rightColor: String) {
-    Column(
+fun FootImageDisplay() {
+    Box(
         modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.SpaceEvenly,
-        horizontalAlignment = Alignment.CenterHorizontally
+            .fillMaxWidth()
+            .height(700.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Box(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
-            Image(
-                painter = painterResource(id = R.drawable.foot3_l),
-                contentDescription = "Left Foot",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.size(550.dp).offset(y = 45.dp)
-            )
-            Box(
-                modifier = Modifier
-                    .offset(x = 50.dp, y = 65.dp)
-                    .size(30.dp)
-                    .background(
-                        color = when (leftColor) {
-                            "GREEN" -> Color.Green
-                            "BLUE" -> Color.Blue
-                            else -> Color.Red
-                        },
-                        shape = CircleShape
-                    )
-            )
-        }
-
-        Box(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
-            Image(
-                painter = painterResource(id = R.drawable.foot3_r),
-                contentDescription = "Right Foot",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.size(550.dp).offset(y = -45.dp)
-            )
-            Box(
-                modifier = Modifier
-                    .offset(x = 50.dp, y = -60.dp)
-                    .size(30.dp)
-                    .background(
-                        color = when (rightColor) {
-                            "GREEN" -> Color.Green
-                            "BLUE" -> Color.Blue
-                            else -> Color.Red
-                        },
-                        shape = CircleShape
-                    )
-            )
-        }
+        Image(
+            painter = painterResource(id = R.drawable.foots_2),
+            contentDescription = "Foot Image",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .width(300.dp)    // 너비를 300dp로 지정
+                .height(600.dp)
+        )
     }
 }
