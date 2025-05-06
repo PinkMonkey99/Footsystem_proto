@@ -241,8 +241,8 @@ fun FootImageDisplay(fsr0: Int) {
 
         Canvas(modifier = Modifier.fillMaxSize()) {
             val color = when {
-                fsr0 > 700 -> Color.Green
-                fsr0 > 300 -> Color.Yellow
+                fsr0 > 2000 -> Color.Green
+                fsr0 > 1000 -> Color.Yellow
                 fsr0 > 50  -> Color.Red
                 else       -> Color.Gray
             }
