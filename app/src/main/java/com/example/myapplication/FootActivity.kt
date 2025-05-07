@@ -38,6 +38,7 @@ import android.util.Log
 @SuppressLint("MissingPermission")
 @OptIn(ExperimentalMaterial3Api::class)
 class FootActivity : ComponentActivity() {
+
     private var bluetoothGatt: BluetoothGatt? = null
     private val espDeviceName = "ESP32-S3 BLE Shoe"
     private val serviceUUID = UUID.fromString("12345678-1234-5678-1234-56789abcdef0")
@@ -113,7 +114,7 @@ class FootActivity : ComponentActivity() {
         scanner.startScan(object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 if (result.device.name == espDeviceName) {
-                    result.device.connectGatt(this@FootActivity, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                    bluetoothGatt = result.device.connectGatt(this@FootActivity, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
                     scanner.stopScan(this)
                 }
             }
@@ -124,7 +125,21 @@ class FootActivity : ComponentActivity() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 runOnUiThread { isConnectedState.value = true }
+                Log.d("FootBLE", "연결 성공, MTU 요청 중…")
                 bluetoothGatt = gatt
+                // MTU 확장 요청 (예: 256 bytes)
+                gatt.requestMtu(256)
+            }
+        }
+
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            super.onMtuChanged(gatt, mtu, status)
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.d("FootBLE", "MTU 확장 성공: $mtu")
+                // MTU 확장 후 서비스 탐색 시작
+                gatt.discoverServices()
+            } else {
+                Log.w("FootBLE", "MTU 확장 실패, 기본 MTU 사용: $mtu")
                 gatt.discoverServices()
             }
         }
@@ -134,11 +149,9 @@ class FootActivity : ComponentActivity() {
             writeCharacteristic = service.getCharacteristic(writeCharUUID)
             val notifyChar = service.getCharacteristic(notifyCharUUID)
             gatt.setCharacteristicNotification(notifyChar, true)
-            // Descriptor는 characteristic에서 가져와야 합니다
-            val descriptor = notifyChar.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-            descriptor?.let {
-                it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                gatt.writeDescriptor(it)
+            notifyChar.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))?.apply {
+                value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                gatt.writeDescriptor(this)
             }
 
             periodicJob?.cancel()
@@ -157,7 +170,7 @@ class FootActivity : ComponentActivity() {
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             val raw = String(characteristic.value, Charsets.UTF_8)
-            Log.d("BLE", "📥 RAW JSON: $raw")
+            Log.d("FootBLE", "📥 RAW JSON: $raw")
             val end = raw.indexOf('}') + 1
             if (end > 0) {
                 val jsonStr = raw.substring(0, end)
@@ -165,11 +178,11 @@ class FootActivity : ComponentActivity() {
                     val json = JSONObject(jsonStr)
                     if (json.has("fsr")) {
                         val firstFsr = json.getJSONArray("fsr").getInt(0)
-                        Log.d("BLE", "✅ Parsed FSR[0]: $firstFsr")
+                        Log.d("FootBLE", "파싱된 FSR[0]: $firstFsr")
                         runOnUiThread { fsr0Value.value = firstFsr }
                     }
                 } catch (e: JSONException) {
-                    Log.e("BLE", "JSON parse error: ${e.localizedMessage}")
+                    Log.e("FootBLE", "JSON parse error: ${e.localizedMessage}")
                 }
             }
         }
@@ -200,13 +213,13 @@ fun FootImageDisplay(fsr0: Int) {
         )
         Canvas(modifier = Modifier.fillMaxSize()) {
             val color = when {
-                fsr0 > 2000 -> Color.Green
-                fsr0 > 1000 -> Color.Yellow
+                fsr0 > 3000 -> Color.Green
+                fsr0 > 2000 -> Color.Yellow
                 fsr0 > 50   -> Color.Red
                 else        -> Color.Gray
             }
             drawCircle(color = color, radius = 40f,
-                center = Offset(x = size.width * 0.5f, y = size.height * 0.7f))
+                center = Offset(x = 400f, y = 1780f))
         }
     }
 }
