@@ -45,7 +45,8 @@ class FootActivity : ComponentActivity() {
     private val notifyCharUUID = UUID.fromString("abcdef01-1234-5678-1234-56789abcdef0")
     private val writeCharUUID = UUID.fromString("abcdef02-1234-5678-1234-56789abcdef0")
 
-    private var fsr0Value = mutableStateOf(0)
+    // 다섯 개 FSR 핀 값 상태
+    private val fsrValues = mutableStateListOf(0, 0, 0, 0, 0)
     private var isConnectedState = mutableStateOf(false)
     private var connectedDeviceNameState = mutableStateOf("")
     private var isMeasuring = mutableStateOf(false)
@@ -94,15 +95,18 @@ class FootActivity : ComponentActivity() {
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Text(
-                        text = "FSR[0] 값: ${fsr0Value.value}",
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                        color = Color.Blue
-                    )
+                    // 다섯 개 핀 값 표시
+                    fsrValues.forEachIndexed { index, value ->
+                        Text(
+                            text = "FSR 핀 ${listOf(4,5,6,7,15)[index]}: $value",
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                            color = Color.Blue
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    FootImageDisplay(fsr0Value.value)
+                    FootImageDisplay(fsrValues)
                 }
             }
         }
@@ -127,21 +131,13 @@ class FootActivity : ComponentActivity() {
                 runOnUiThread { isConnectedState.value = true }
                 Log.d("FootBLE", "연결 성공, MTU 요청 중…")
                 bluetoothGatt = gatt
-                // MTU 확장 요청 (예: 256 bytes)
                 gatt.requestMtu(256)
             }
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
             super.onMtuChanged(gatt, mtu, status)
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.d("FootBLE", "MTU 확장 성공: $mtu")
-                // MTU 확장 후 서비스 탐색 시작
-                gatt.discoverServices()
-            } else {
-                Log.w("FootBLE", "MTU 확장 실패, 기본 MTU 사용: $mtu")
-                gatt.discoverServices()
-            }
+            gatt.discoverServices()
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
@@ -159,10 +155,10 @@ class FootActivity : ComponentActivity() {
                 runOnUiThread { isMeasuring.value = true }
                 while (isActive) {
                     delay(1000)
-                    writeCharacteristic?.let {
-                        it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                        it.value = "measure".toByteArray()
-                        gatt.writeCharacteristic(it)
+                    writeCharacteristic?.apply {
+                        writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                        value = "measure".toByteArray()
+                        gatt.writeCharacteristic(this)
                     }
                 }
             }
@@ -170,16 +166,14 @@ class FootActivity : ComponentActivity() {
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             val raw = String(characteristic.value, Charsets.UTF_8)
-            Log.d("FootBLE", "📥 RAW JSON: $raw")
             val end = raw.indexOf('}') + 1
             if (end > 0) {
-                val jsonStr = raw.substring(0, end)
                 try {
-                    val json = JSONObject(jsonStr)
-                    if (json.has("fsr")) {
-                        val firstFsr = json.getJSONArray("fsr").getInt(0)
-                        Log.d("FootBLE", "파싱된 FSR[0]: $firstFsr")
-                        runOnUiThread { fsr0Value.value = firstFsr }
+                    val json = JSONObject(raw.substring(0, end))
+                    val arr = json.getJSONArray("fsr")
+                    for (i in 0 until arr.length()) {
+                        val v = arr.getInt(i)
+                        runOnUiThread { fsrValues[i] = v }
                     }
                 } catch (e: JSONException) {
                     Log.e("FootBLE", "JSON parse error: ${e.localizedMessage}")
@@ -192,10 +186,7 @@ class FootActivity : ComponentActivity() {
         periodicJob?.cancel()
         periodicJob = null
         runOnUiThread { isMeasuring.value = false }
-        bluetoothGatt?.let {
-            it.disconnect()
-            it.close()
-        }
+        bluetoothGatt?.let { it.disconnect(); it.close() }
         runOnUiThread {
             isConnectedState.value = false
             connectedDeviceNameState.value = ""
@@ -204,7 +195,7 @@ class FootActivity : ComponentActivity() {
 }
 
 @Composable
-fun FootImageDisplay(fsr0: Int) {
+fun FootImageDisplay(fsrValues: List<Int>) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Image(
             painter = painterResource(id = R.drawable.foots_2),
@@ -212,14 +203,22 @@ fun FootImageDisplay(fsr0: Int) {
             modifier = Modifier.fillMaxSize()
         )
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val color = when {
-                fsr0 > 3000 -> Color.Green
-                fsr0 > 2000 -> Color.Yellow
-                fsr0 > 50   -> Color.Red
-                else        -> Color.Gray
+            val positions = listOf(
+                Offset(size.width * 0.3f, size.height * 0.78f),
+                Offset(size.width * 0.22f, size.height * 0.54f),
+                Offset(size.width * 0.19f, size.height * 0.35f),
+                Offset(size.width * 0.26f, size.height * 0.31f),
+                Offset(size.width * 0.38f, size.height * 0.29f)
+            )
+            fsrValues.forEachIndexed { idx, v ->
+                val color = when {
+                    v > 3000 -> Color.Green
+                    v > 2000 -> Color.Yellow
+                    v > 50   -> Color.Red
+                    else     -> Color.Gray
+                }
+                drawCircle(color = color, radius = 40f, center = positions[idx])
             }
-            drawCircle(color = color, radius = 40f,
-                center = Offset(x = 400f, y = 1780f))
         }
     }
 }
