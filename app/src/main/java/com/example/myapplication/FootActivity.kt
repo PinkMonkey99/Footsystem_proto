@@ -11,7 +11,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -22,12 +21,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.app.ActivityCompat
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.*
 import org.json.JSONException
@@ -45,8 +45,8 @@ class FootActivity : ComponentActivity() {
     private val notifyCharUUID = UUID.fromString("abcdef01-1234-5678-1234-56789abcdef0")
     private val writeCharUUID = UUID.fromString("abcdef02-1234-5678-1234-56789abcdef0")
 
-    // 다섯 개 FSR 핀 값 상태
     private val fsrValues = mutableStateListOf(0, 0, 0, 0, 0)
+    private var squatPosture = mutableStateOf("")
     private var isConnectedState = mutableStateOf(false)
     private var connectedDeviceNameState = mutableStateOf("")
     private var isMeasuring = mutableStateOf(false)
@@ -55,7 +55,6 @@ class FootActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 런타임 권한 요청
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val needed = arrayOf(
                 Manifest.permission.BLUETOOTH_SCAN,
@@ -95,7 +94,6 @@ class FootActivity : ComponentActivity() {
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // 다섯 개 핀 값 표시
                     fsrValues.forEachIndexed { index, value ->
                         Text(
                             text = "FSR 핀 ${listOf(4,5,6,7,15)[index]}: $value",
@@ -103,6 +101,14 @@ class FootActivity : ComponentActivity() {
                             color = Color.Blue
                         )
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "스쿼트 자세: ${squatPosture.value}",
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                        color = Color.Magenta
+                    )
 
                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -118,7 +124,17 @@ class FootActivity : ComponentActivity() {
         scanner.startScan(object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 if (result.device.name == espDeviceName) {
-                    bluetoothGatt = result.device.connectGatt(this@FootActivity, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                    if (ActivityCompat.checkSelfPermission(
+                            this@FootActivity,
+                            Manifest.permission.BLUETOOTH_CONNECT
+                        ) != PackageManager.PERMISSION_GRANTED
+                    ) return
+                    bluetoothGatt = result.device.connectGatt(
+                        this@FootActivity,
+                        false,
+                        gattCallback,
+                        BluetoothDevice.TRANSPORT_LE
+                    )
                     scanner.stopScan(this)
                 }
             }
@@ -128,7 +144,10 @@ class FootActivity : ComponentActivity() {
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                runOnUiThread { isConnectedState.value = true }
+                runOnUiThread {
+                    isConnectedState.value = true
+                    connectedDeviceNameState.value = espDeviceName
+                }
                 Log.d("FootBLE", "연결 성공, MTU 요청 중…")
                 bluetoothGatt = gatt
                 gatt.requestMtu(256)
@@ -145,9 +164,12 @@ class FootActivity : ComponentActivity() {
             writeCharacteristic = service.getCharacteristic(writeCharUUID)
             val notifyChar = service.getCharacteristic(notifyCharUUID)
             gatt.setCharacteristicNotification(notifyChar, true)
-            notifyChar.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))?.apply {
-                value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                gatt.writeDescriptor(this)
+            val descriptor = notifyChar.getDescriptor(
+                UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+            )
+            descriptor?.let {
+                it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                gatt.writeDescriptor(it)
             }
 
             periodicJob?.cancel()
@@ -164,16 +186,22 @@ class FootActivity : ComponentActivity() {
             }
         }
 
-        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic
+        ) {
             val raw = String(characteristic.value, Charsets.UTF_8)
             val end = raw.indexOf('}') + 1
             if (end > 0) {
                 try {
                     val json = JSONObject(raw.substring(0, end))
                     val arr = json.getJSONArray("fsr")
-                    for (i in 0 until arr.length()) {
-                        val v = arr.getInt(i)
-                        runOnUiThread { fsrValues[i] = v }
+                    val posture = json.optString("squat_posture", "")
+                    runOnUiThread {
+                        for (i in 0 until arr.length()) {
+                            fsrValues[i] = arr.getInt(i)
+                        }
+                        squatPosture.value = posture
                     }
                 } catch (e: JSONException) {
                     Log.e("FootBLE", "JSON parse error: ${e.localizedMessage}")
@@ -186,7 +214,7 @@ class FootActivity : ComponentActivity() {
         periodicJob?.cancel()
         periodicJob = null
         runOnUiThread { isMeasuring.value = false }
-        bluetoothGatt?.let { it.disconnect(); it.close() }
+        bluetoothGatt?.apply { disconnect(); close() }
         runOnUiThread {
             isConnectedState.value = false
             connectedDeviceNameState.value = ""
@@ -199,26 +227,30 @@ fun FootImageDisplay(fsrValues: List<Int>) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Image(
             painter = painterResource(id = R.drawable.foots_2),
-            contentDescription = "Foot Image", contentScale = ContentScale.Fit,
+            contentDescription = "Foot Image",
+            contentScale = ContentScale.Fit,
             modifier = Modifier.fillMaxSize()
         )
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val positions = listOf(
-                Offset(size.width * 0.3f, size.height * 0.78f),
-                Offset(size.width * 0.22f, size.height * 0.54f),
-                Offset(size.width * 0.19f, size.height * 0.35f),
-                Offset(size.width * 0.26f, size.height * 0.31f),
-                Offset(size.width * 0.38f, size.height * 0.29f)
+
+        val fsrImages = listOf(
+            R.drawable.foot_fsr4,
+            R.drawable.foot_fsr5,
+            R.drawable.foot_fsr6,
+            R.drawable.foot_fsr7,
+            R.drawable.foot_fsr15
+        )
+
+        fsrValues.forEachIndexed { index, value ->
+            val alpha = (value.coerceIn(0, 5000).toFloat() / 5000f)
+            val tintColor = Color.Red.copy(alpha = alpha)
+
+            Image(
+                painter = painterResource(fsrImages[index]),
+                contentDescription = "FSR Section ${index}",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit,
+                colorFilter = ColorFilter.tint(tintColor)
             )
-            fsrValues.forEachIndexed { idx, v ->
-                val color = when {
-                    v > 3000 -> Color.Green
-                    v > 2000 -> Color.Yellow
-                    v > 50   -> Color.Red
-                    else     -> Color.Gray
-                }
-                drawCircle(color = color, radius = 40f, center = positions[idx])
-            }
         }
     }
 }
