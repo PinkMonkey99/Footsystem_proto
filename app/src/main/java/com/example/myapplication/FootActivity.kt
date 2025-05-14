@@ -2,9 +2,16 @@ package com.example.myapplication
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.bluetooth.*
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -15,8 +22,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,16 +31,14 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+
 import androidx.core.content.ContextCompat
-import androidx.core.app.ActivityCompat
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.*
-import org.json.JSONException
 import org.json.JSONObject
 import java.util.*
 import android.util.Log
 
-@SuppressLint("MissingPermission")
 @OptIn(ExperimentalMaterial3Api::class)
 class FootActivity : ComponentActivity() {
 
@@ -53,6 +56,7 @@ class FootActivity : ComponentActivity() {
     private var periodicJob: Job? = null
     private var writeCharacteristic: BluetoothGattCharacteristic? = null
 
+    @SuppressLint("MissingPermission")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -74,7 +78,7 @@ class FootActivity : ComponentActivity() {
                         title = { Text("Foot Measurement") },
                         navigationIcon = {
                             IconButton(onClick = { finish() }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "뒤로 가기")
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로 가기")
                             }
                         },
                         actions = {
@@ -94,9 +98,10 @@ class FootActivity : ComponentActivity() {
 
                     Spacer(modifier = Modifier.height(8.dp))
 
+                    val pinList = listOf(4, 5, 6, 7, 15)
                     fsrValues.forEachIndexed { index, value ->
                         Text(
-                            text = "FSR 핀 ${listOf(4,5,6,7,15)[index]}: $value",
+                            text = "FSR 핀 ${pinList[index]}: $value",
                             modifier = Modifier.align(Alignment.CenterHorizontally),
                             color = Color.Blue
                         )
@@ -118,29 +123,39 @@ class FootActivity : ComponentActivity() {
         }
     }
 
+    @SuppressLint("MissingPermission")
     private fun startBleScan() {
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
+        val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter ?: return
         val scanner = adapter.bluetoothLeScanner ?: return
         scanner.startScan(object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 if (result.device.name == espDeviceName) {
-                    if (ActivityCompat.checkSelfPermission(
+                    if (ContextCompat.checkSelfPermission(
                             this@FootActivity,
                             Manifest.permission.BLUETOOTH_CONNECT
-                        ) != PackageManager.PERMISSION_GRANTED
-                    ) return
-                    bluetoothGatt = result.device.connectGatt(
-                        this@FootActivity,
-                        false,
-                        gattCallback,
-                        BluetoothDevice.TRANSPORT_LE
-                    )
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        try {
+                            bluetoothGatt = result.device.connectGatt(
+                                this@FootActivity,
+                                false,
+                                gattCallback,
+                                BluetoothDevice.TRANSPORT_LE
+                            )
+                        } catch (e: SecurityException) {
+                            Log.e("FootBLE", "SecurityException connectGatt: ${e.message}")
+                        }
+                    } else {
+                        Log.w("FootBLE", "Missing BLUETOOTH_CONNECT permission for connectGatt")
+                    }
                     scanner.stopScan(this)
                 }
             }
         })
     }
 
+    @SuppressLint("MissingPermission")
+    @Suppress("DEPRECATION")
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
@@ -148,14 +163,24 @@ class FootActivity : ComponentActivity() {
                     isConnectedState.value = true
                     connectedDeviceNameState.value = espDeviceName
                 }
-                Log.d("FootBLE", "연결 성공, MTU 요청 중…")
+                if (ContextCompat.checkSelfPermission(
+                        this@FootActivity,
+                        Manifest.permission.BLUETOOTH_CONNECT
+                    ) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    try {
+                        gatt.requestMtu(256)
+                    } catch (e: SecurityException) {
+                        Log.e("FootBLE", "SecurityException requestMtu: ${e.message}")
+                    }
+                } else {
+                    Log.w("FootBLE", "Missing BLUETOOTH_CONNECT permission for requestMtu")
+                }
                 bluetoothGatt = gatt
-                gatt.requestMtu(256)
             }
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-            super.onMtuChanged(gatt, mtu, status)
             gatt.discoverServices()
         }
 
@@ -163,13 +188,32 @@ class FootActivity : ComponentActivity() {
             val service = gatt.getService(serviceUUID) ?: return
             writeCharacteristic = service.getCharacteristic(writeCharUUID)
             val notifyChar = service.getCharacteristic(notifyCharUUID)
-            gatt.setCharacteristicNotification(notifyChar, true)
-            val descriptor = notifyChar.getDescriptor(
-                UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-            )
-            descriptor?.let {
-                it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                gatt.writeDescriptor(it)
+
+            if (ContextCompat.checkSelfPermission(
+                    this@FootActivity,
+                    Manifest.permission.BLUETOOTH_CONNECT
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
+                try {
+                    gatt.setCharacteristicNotification(notifyChar, true)
+                    val descriptor = notifyChar.getDescriptor(
+                        UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+                    )
+                    descriptor?.let {
+                        @Suppress("DEPRECATION")
+                        it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        try {
+                            @Suppress("DEPRECATION")
+                            gatt.writeDescriptor(it)
+                        } catch (e: SecurityException) {
+                            Log.e("FootBLE", "SecurityException writeDescriptor: ${e.message}")
+                        }
+                    }
+                } catch (e: SecurityException) {
+                    Log.e("FootBLE", "SecurityException setCharacteristicNotification: ${e.message}")
+                }
+            } else {
+                Log.w("FootBLE", "Missing BLUETOOTH_CONNECT permission for notifications")
             }
 
             periodicJob?.cancel()
@@ -179,18 +223,38 @@ class FootActivity : ComponentActivity() {
                     delay(1000)
                     writeCharacteristic?.apply {
                         writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                        @Suppress("DEPRECATION")
                         value = "measure".toByteArray()
-                        gatt.writeCharacteristic(this)
+                        if (ContextCompat.checkSelfPermission(
+                                this@FootActivity,
+                                Manifest.permission.BLUETOOTH_CONNECT
+                            ) == PackageManager.PERMISSION_GRANTED
+                        ) {
+                            try {
+                                @Suppress("DEPRECATION")
+                                gatt.writeCharacteristic(this)
+                            } catch (e: SecurityException) {
+                                Log.e("FootBLE", "SecurityException writeCharacteristic: ${e.message}")
+                            }
+                        } else {
+                            Log.w("FootBLE", "Missing BLUETOOTH_CONNECT permission for writeCharacteristic")
+                        }
                     }
                 }
             }
         }
 
+        @Deprecated("Deprecated in Android")
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic
         ) {
-            val raw = String(characteristic.value, Charsets.UTF_8)
+            val raw = try {
+                String(characteristic.value, Charsets.UTF_8)
+            } catch (e: SecurityException) {
+                Log.e("FootBLE", "SecurityException read characteristic: ${e.message}")
+                return
+            }
             val end = raw.indexOf('}') + 1
             if (end > 0) {
                 try {
@@ -203,7 +267,7 @@ class FootActivity : ComponentActivity() {
                         }
                         squatPosture.value = posture
                     }
-                } catch (e: JSONException) {
+                } catch (e: Exception) {
                     Log.e("FootBLE", "JSON parse error: ${e.localizedMessage}")
                 }
             }
@@ -214,7 +278,10 @@ class FootActivity : ComponentActivity() {
         periodicJob?.cancel()
         periodicJob = null
         runOnUiThread { isMeasuring.value = false }
-        bluetoothGatt?.apply { disconnect(); close() }
+        bluetoothGatt?.apply {
+            try { disconnect() } catch (_: SecurityException) { }
+            try { close() } catch (_: SecurityException) { }
+        }
         runOnUiThread {
             isConnectedState.value = false
             connectedDeviceNameState.value = ""
@@ -246,7 +313,7 @@ fun FootImageDisplay(fsrValues: List<Int>) {
 
             Image(
                 painter = painterResource(fsrImages[index]),
-                contentDescription = "FSR Section ${index}",
+                contentDescription = "FSR Section $index",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,
                 colorFilter = ColorFilter.tint(tintColor)
