@@ -40,7 +40,7 @@ import android.util.Log
 class FootActivity : ComponentActivity() {
 
     private var bluetoothGatt: BluetoothGatt? = null
-    private val espDeviceName = "ESP32-S3 BLE Shoe"
+    private val espDeviceName = "ESP32-S3 BLE Shoe left"
     private val serviceUUID = UUID.fromString("12345678-1234-5678-1234-56789abcdef0")
     private val notifyCharUUID = UUID.fromString("abcdef01-1234-5678-1234-56789abcdef0")
     private val writeCharUUID = UUID.fromString("abcdef02-1234-5678-1234-56789abcdef0")
@@ -233,11 +233,11 @@ fun FootImageDisplay(fsrValues: List<Int>) {
         )
 
         val fsrImages = listOf(
-            R.drawable.foot_fsr4,
-            R.drawable.foot_fsr5,
-            R.drawable.foot_fsr6,
-            R.drawable.foot_fsr7,
-            R.drawable.foot_fsr15
+            R.drawable.foot_l_fsr4,
+            R.drawable.foot_l_fsr5,
+            R.drawable.foot_l_fsr6,
+            R.drawable.foot_l_fsr7,
+            R.drawable.foot_l_fsr15
         )
 
         fsrValues.forEachIndexed { index, value ->
