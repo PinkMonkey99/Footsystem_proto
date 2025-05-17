@@ -2,13 +2,7 @@ package com.example.myapplication
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothGatt
-import android.bluetooth.BluetoothGattCallback
-import android.bluetooth.BluetoothGattCharacteristic
-import android.bluetooth.BluetoothGattDescriptor
-import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothProfile
+import android.bluetooth.*
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.Context
@@ -31,7 +25,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.*
@@ -39,35 +33,45 @@ import org.json.JSONObject
 import java.util.*
 import android.util.Log
 
+@SuppressLint("MissingPermission")
 @OptIn(ExperimentalMaterial3Api::class)
 class FootActivity : ComponentActivity() {
 
-    private var bluetoothGatt: BluetoothGatt? = null
-    private val espDeviceName = "ESP32-S3 BLE Shoe left"
-    private val serviceUUID = UUID.fromString("12345678-1234-5678-1234-56789abcdef0")
-    private val notifyCharUUID = UUID.fromString("abcdef01-1234-5678-1234-56789abcdef0")
-    private val writeCharUUID = UUID.fromString("abcdef02-1234-5678-1234-56789abcdef0")
+    private val leftDeviceName = "ESP32-S3 BLE Shoe left"
+    private val rightDeviceName = "ESP32-S3 BLE right shoe"
 
-    private val fsrValues = mutableStateListOf(0, 0, 0, 0, 0)
-    private var squatPosture = mutableStateOf("")
-    private var isConnectedState = mutableStateOf(false)
-    private var connectedDeviceNameState = mutableStateOf("")
-    private var isMeasuring = mutableStateOf(false)
-    private var periodicJob: Job? = null
-    private var writeCharacteristic: BluetoothGattCharacteristic? = null
+    private val leftServiceUUID = UUID.fromString("12345678-1234-5678-1234-56789abcdef0")
+    private val leftNotifyUUID = UUID.fromString("abcdef01-1234-5678-1234-56789abcdef0")
+    private val leftWriteUUID = UUID.fromString("abcdef02-1234-5678-1234-56789abcdef0")
 
-    @SuppressLint("MissingPermission")
+    private val rightServiceUUID = UUID.fromString("87654321-4321-6789-4321-0fedcba98765")
+    private val rightNotifyUUID = UUID.fromString("fedcba01-4321-6789-4321-0fedcba98765")
+    private val rightWriteUUID = UUID.fromString("fedcba02-4321-6789-4321-0fedcba98765")
+
+    private var leftGatt: BluetoothGatt? = null
+    private var rightGatt: BluetoothGatt? = null
+
+    private val fsrLeft = mutableStateListOf(0, 0, 0, 0, 0)
+    private val fsrRight = mutableStateListOf(0, 0, 0, 0, 0)
+
+    private var isLeftConnected by mutableStateOf(false)
+    private var isRightConnected by mutableStateOf(false)
+    private var isMeasuring by mutableStateOf(false)
+    private var leftWriteChar: BluetoothGattCharacteristic? = null
+    private var rightWriteChar: BluetoothGattCharacteristic? = null
+    private var measureJob: Job? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val needed = arrayOf(
+            val permissions = arrayOf(
                 Manifest.permission.BLUETOOTH_SCAN,
                 Manifest.permission.BLUETOOTH_CONNECT,
                 Manifest.permission.ACCESS_FINE_LOCATION
             )
-            if (!needed.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }) {
-                registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
-                    .launch(needed)
+            if (!permissions.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }) {
+                registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}.launch(permissions)
             }
         }
 
@@ -78,105 +82,70 @@ class FootActivity : ComponentActivity() {
                         title = { Text("Foot Measurement") },
                         navigationIcon = {
                             IconButton(onClick = { finish() }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로 가기")
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                             }
                         },
                         actions = {
-                            Button(onClick = { startBleScan() }, enabled = !isMeasuring.value) { Text("측정시작") }
+                            Button(onClick = { startBleScan() }, enabled = !isMeasuring) { Text("측정시작") }
                             Spacer(modifier = Modifier.width(8.dp))
-                            Button(onClick = { stopMeasurement() }, enabled = isMeasuring.value) { Text("측정중지") }
+                            Button(onClick = { stopMeasurement() }, enabled = isMeasuring) { Text("측정종료") }
                         }
                     )
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = if (isConnectedState.value) "✅ 연결됨: ${connectedDeviceNameState.value}" else "🔄 BLE 연결 대기 중...",
-                        color = if (isConnectedState.value) Color.Green else Color.Gray,
+                        text = if (isLeftConnected) "✅ 왼발 연결됨" else "🔄 왼발 연결 대기 중...",
+                        color = if (isLeftConnected) Color.Green else Color.Gray,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    )
+
+                    Text(
+                        text = if (isRightConnected) "✅ 오른발 연결됨" else "🔄 오른발 연결 대기 중...",
+                        color = if (isRightConnected) Color.Blue else Color.Gray,
                         modifier = Modifier.align(Alignment.CenterHorizontally)
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    val pinList = listOf(4, 5, 6, 7, 15)
-                    fsrValues.forEachIndexed { index, value ->
-                        Text(
-                            text = "FSR 핀 ${pinList[index]}: $value",
-                            modifier = Modifier.align(Alignment.CenterHorizontally),
-                            color = Color.Blue
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = "스쿼트 자세: ${squatPosture.value}",
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                        color = Color.Magenta
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    FootImageDisplay(fsrValues)
+                    FootImageDisplay(fsrLeftValues = fsrLeft, fsrRightValues = fsrRight)
                 }
             }
         }
     }
 
-    @SuppressLint("MissingPermission")
     private fun startBleScan() {
-        val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter ?: return
+        val manager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        val adapter = manager.adapter ?: return
         val scanner = adapter.bluetoothLeScanner ?: return
         scanner.startScan(object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
-                if (result.device.name == espDeviceName) {
-                    if (ContextCompat.checkSelfPermission(
-                            this@FootActivity,
-                            Manifest.permission.BLUETOOTH_CONNECT
-                        ) == PackageManager.PERMISSION_GRANTED
-                    ) {
-                        try {
-                            bluetoothGatt = result.device.connectGatt(
-                                this@FootActivity,
-                                false,
-                                gattCallback,
-                                BluetoothDevice.TRANSPORT_LE
-                            )
-                        } catch (e: SecurityException) {
-                            Log.e("FootBLE", "SecurityException connectGatt: ${e.message}")
-                        }
-                    } else {
-                        Log.w("FootBLE", "Missing BLUETOOTH_CONNECT permission for connectGatt")
+                val device = result.device
+                val name = device.name ?: return
+                val gattCallback = getGattCallback(name)
+                when (name) {
+                    leftDeviceName -> {
+                        leftGatt = device.connectGatt(this@FootActivity, false, gattCallback)
                     }
+                    rightDeviceName -> {
+                        rightGatt = device.connectGatt(this@FootActivity, false, gattCallback)
+                    }
+                }
+                if (leftGatt != null && rightGatt != null) {
                     scanner.stopScan(this)
                 }
             }
         })
     }
 
-    @SuppressLint("MissingPermission")
-    @Suppress("DEPRECATION")
-    private val gattCallback = object : BluetoothGattCallback() {
+    private fun getGattCallback(deviceName: String) = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                gatt.requestMtu(256)
                 runOnUiThread {
-                    isConnectedState.value = true
-                    connectedDeviceNameState.value = espDeviceName
+                    if (deviceName == leftDeviceName) isLeftConnected = true
+                    else if (deviceName == rightDeviceName) isRightConnected = true
                 }
-                if (ContextCompat.checkSelfPermission(
-                        this@FootActivity,
-                        Manifest.permission.BLUETOOTH_CONNECT
-                    ) == PackageManager.PERMISSION_GRANTED
-                ) {
-                    try {
-                        gatt.requestMtu(256)
-                    } catch (e: SecurityException) {
-                        Log.e("FootBLE", "SecurityException requestMtu: ${e.message}")
-                    }
-                } else {
-                    Log.w("FootBLE", "Missing BLUETOOTH_CONNECT permission for requestMtu")
-                }
-                bluetoothGatt = gatt
             }
         }
 
@@ -185,112 +154,87 @@ class FootActivity : ComponentActivity() {
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            val service = gatt.getService(serviceUUID) ?: return
-            writeCharacteristic = service.getCharacteristic(writeCharUUID)
-            val notifyChar = service.getCharacteristic(notifyCharUUID)
-
-            if (ContextCompat.checkSelfPermission(
-                    this@FootActivity,
-                    Manifest.permission.BLUETOOTH_CONNECT
-                ) == PackageManager.PERMISSION_GRANTED
-            ) {
-                try {
-                    gatt.setCharacteristicNotification(notifyChar, true)
-                    val descriptor = notifyChar.getDescriptor(
-                        UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-                    )
-                    descriptor?.let {
-                        @Suppress("DEPRECATION")
-                        it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                        try {
-                            @Suppress("DEPRECATION")
-                            gatt.writeDescriptor(it)
-                        } catch (e: SecurityException) {
-                            Log.e("FootBLE", "SecurityException writeDescriptor: ${e.message}")
-                        }
-                    }
-                } catch (e: SecurityException) {
-                    Log.e("FootBLE", "SecurityException setCharacteristicNotification: ${e.message}")
-                }
+            val (serviceUUID, notifyUUID, writeUUID) = if (deviceName == leftDeviceName) {
+                Triple(leftServiceUUID, leftNotifyUUID, leftWriteUUID)
             } else {
-                Log.w("FootBLE", "Missing BLUETOOTH_CONNECT permission for notifications")
+                Triple(rightServiceUUID, rightNotifyUUID, rightWriteUUID)
             }
 
-            periodicJob?.cancel()
-            periodicJob = CoroutineScope(Dispatchers.IO).launch {
-                runOnUiThread { isMeasuring.value = true }
-                while (isActive) {
-                    delay(1000)
-                    writeCharacteristic?.apply {
-                        writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                        @Suppress("DEPRECATION")
-                        value = "measure".toByteArray()
-                        if (ContextCompat.checkSelfPermission(
-                                this@FootActivity,
-                                Manifest.permission.BLUETOOTH_CONNECT
-                            ) == PackageManager.PERMISSION_GRANTED
-                        ) {
-                            try {
-                                @Suppress("DEPRECATION")
-                                gatt.writeCharacteristic(this)
-                            } catch (e: SecurityException) {
-                                Log.e("FootBLE", "SecurityException writeCharacteristic: ${e.message}")
-                            }
-                        } else {
-                            Log.w("FootBLE", "Missing BLUETOOTH_CONNECT permission for writeCharacteristic")
+            val service = gatt.getService(serviceUUID) ?: return
+            val notifyChar = service.getCharacteristic(notifyUUID) ?: return
+            val writeChar = service.getCharacteristic(writeUUID)
+
+            gatt.setCharacteristicNotification(notifyChar, true)
+            val descriptor = notifyChar.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+            descriptor?.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+            descriptor?.let { gatt.writeDescriptor(it) }
+
+            if (deviceName == leftDeviceName) leftWriteChar = writeChar
+            else rightWriteChar = writeChar
+
+            if (leftWriteChar != null && rightWriteChar != null && measureJob == null) {
+                measureJob = CoroutineScope(Dispatchers.IO).launch {
+                    isMeasuring = true
+                    while (isActive) {
+                        delay(1000)
+                        leftWriteChar?.let {
+                            it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                            it.value = "measure".toByteArray()
+                            leftGatt?.writeCharacteristic(it)
+                        }
+                        rightWriteChar?.let {
+                            it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                            it.value = "measure".toByteArray()
+                            rightGatt?.writeCharacteristic(it)
                         }
                     }
                 }
             }
         }
 
-        @Deprecated("Deprecated in Android")
-        override fun onCharacteristicChanged(
-            gatt: BluetoothGatt,
-            characteristic: BluetoothGattCharacteristic
-        ) {
-            val raw = try {
-                String(characteristic.value, Charsets.UTF_8)
-            } catch (e: SecurityException) {
-                Log.e("FootBLE", "SecurityException read characteristic: ${e.message}")
-                return
-            }
+        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            val raw = String(characteristic.value, Charsets.UTF_8)
             val end = raw.indexOf('}') + 1
             if (end > 0) {
                 try {
                     val json = JSONObject(raw.substring(0, end))
-                    val arr = json.getJSONArray("fsr")
-                    val posture = json.optString("squat_posture", "")
-                    runOnUiThread {
-                        for (i in 0 until arr.length()) {
-                            fsrValues[i] = arr.getInt(i)
+                    if (json.has("fsr_left")) {
+                        val arr = json.getJSONArray("fsr_left")
+                        runOnUiThread {
+                            for (i in 0 until arr.length()) {
+                                fsrLeft[i] = arr.getInt(i)
+                            }
                         }
-                        squatPosture.value = posture
+                    } else if (json.has("fsr_right")) {
+                        val arr = json.getJSONArray("fsr_right")
+                        runOnUiThread {
+                            for (i in 0 until arr.length()) {
+                                fsrRight[i] = arr.getInt(i)
+                            }
+                        }
                     }
                 } catch (e: Exception) {
-                    Log.e("FootBLE", "JSON parse error: ${e.localizedMessage}")
+                    Log.e("BLE", "JSON parse error: ${e.localizedMessage}")
                 }
             }
         }
     }
 
     private fun stopMeasurement() {
-        periodicJob?.cancel()
-        periodicJob = null
-        runOnUiThread { isMeasuring.value = false }
-        bluetoothGatt?.apply {
-            try { disconnect() } catch (_: SecurityException) { }
-            try { close() } catch (_: SecurityException) { }
-        }
-        runOnUiThread {
-            isConnectedState.value = false
-            connectedDeviceNameState.value = ""
-        }
+        measureJob?.cancel()
+        measureJob = null
+        isMeasuring = false
+        leftGatt?.disconnect()
+        rightGatt?.disconnect()
+        leftGatt?.close()
+        rightGatt?.close()
+        isLeftConnected = false
+        isRightConnected = false
     }
 }
 
 @Composable
-fun FootImageDisplay(fsrValues: List<Int>) {
+fun FootImageDisplay(fsrLeftValues: List<Int>, fsrRightValues: List<Int>) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Image(
             painter = painterResource(id = R.drawable.foots_2),
@@ -299,7 +243,7 @@ fun FootImageDisplay(fsrValues: List<Int>) {
             modifier = Modifier.fillMaxSize()
         )
 
-        val fsrImages = listOf(
+        val leftImages = listOf(
             R.drawable.foot_l_fsr4,
             R.drawable.foot_l_fsr5,
             R.drawable.foot_l_fsr6,
@@ -307,16 +251,35 @@ fun FootImageDisplay(fsrValues: List<Int>) {
             R.drawable.foot_l_fsr15
         )
 
-        fsrValues.forEachIndexed { index, value ->
+        fsrLeftValues.forEachIndexed { index, value ->
             val alpha = (value.coerceIn(0, 5000).toFloat() / 5000f)
-            val tintColor = Color.Red.copy(alpha = alpha)
-
+            val tint = Color.Red.copy(alpha = alpha)
             Image(
-                painter = painterResource(fsrImages[index]),
-                contentDescription = "FSR Section $index",
+                painter = painterResource(leftImages[index]),
+                contentDescription = "Left FSR $index",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,
-                colorFilter = ColorFilter.tint(tintColor)
+                colorFilter = ColorFilter.tint(tint)
+            )
+        }
+
+        val rightImages = listOf(
+            R.drawable.foot_r_fsr4,
+            R.drawable.foot_r_fsr5,
+            R.drawable.foot_r_fsr6,
+            R.drawable.foot_r_fsr7,
+            R.drawable.foot_r_fsr15
+        )
+
+        fsrRightValues.forEachIndexed { index, value ->
+            val alpha = (value.coerceIn(0, 5000).toFloat() / 5000f)
+            val tint = Color.Blue.copy(alpha = alpha)
+            Image(
+                painter = painterResource(rightImages[index]),
+                contentDescription = "Right FSR $index",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit,
+                colorFilter = ColorFilter.tint(tint)
             )
         }
     }
