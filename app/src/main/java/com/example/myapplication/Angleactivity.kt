@@ -13,6 +13,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -21,17 +22,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.core.content.ContextCompat
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.util.*
 import android.util.Log
-import androidx.compose.foundation.background
 
 @SuppressLint("MissingPermission")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -190,14 +190,18 @@ class AngleActivity : ComponentActivity() {
             if (end > 0) {
                 try {
                     val json = JSONObject(raw.substring(0, end))
-                    val imu = json.optJSONObject("imu")
-                    val roll = imu?.optDouble("roll") ?: return
-                    runOnUiThread {
-                        if (deviceName == leftDeviceName) leftRoll = roll
-                        else if (deviceName == rightDeviceName) rightRoll = roll
+                    val roll = json.optDouble("roll", Double.NaN)
+
+                    if (!roll.isNaN()) {
+                        runOnUiThread {
+                            if (deviceName == leftDeviceName) leftRoll = roll
+                            else if (deviceName == rightDeviceName) rightRoll = roll
+                        }
+                    } else {
+                        Log.w("BLE", "⚠️ 'roll' 없음: $raw")
                     }
                 } catch (e: Exception) {
-                    Log.e("BLE", "JSON parse error: ${e.localizedMessage}")
+                    Log.e("BLE", "JSON 파싱 오류: ${e.localizedMessage}")
                 }
             }
         }
@@ -219,7 +223,7 @@ fun RotatingFootImages(leftRoll: Double, rightRoll: Double) {
         modifier = Modifier
             .fillMaxSize()
             .padding(vertical = 32.dp)
-            .background(Color.Black), // ✅ 검정 배경 추가
+            .background(Color.Black),
         verticalArrangement = Arrangement.SpaceEvenly,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -239,9 +243,9 @@ fun RotatingFootImages(leftRoll: Double, rightRoll: Double) {
                 contentDescription = "왼발 이미지",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
-                    .fillMaxWidth(0.95f) // 가로 너비 조절
-                    .aspectRatio(1f) // 가로 세로 비율 1:1 고정
-                    .graphicsLayer { rotationZ = 90f } // 회전
+                    .fillMaxWidth(0.95f)
+                    .aspectRatio(1f)
+                    .graphicsLayer { rotationZ = leftRoll.toFloat() }
             )
         }
 
@@ -263,7 +267,7 @@ fun RotatingFootImages(leftRoll: Double, rightRoll: Double) {
                 modifier = Modifier
                     .fillMaxWidth(0.95f)
                     .aspectRatio(1f)
-                    .graphicsLayer { rotationZ = 90f }
+                    .graphicsLayer { rotationZ = rightRoll.toFloat() }
             )
         }
     }
