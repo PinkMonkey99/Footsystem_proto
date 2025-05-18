@@ -21,7 +21,9 @@
         <activity
             android:name=".FootActivity"
             android:exported="false" />
-        <activity android:name=".AngleActivity" />
+        <activity
+            android:name=".AngleActivity"
+            android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
