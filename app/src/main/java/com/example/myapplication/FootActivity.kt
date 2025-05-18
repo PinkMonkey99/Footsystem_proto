@@ -51,15 +51,18 @@ class FootActivity : ComponentActivity() {
     private var leftGatt: BluetoothGatt? = null
     private var rightGatt: BluetoothGatt? = null
 
-    private val fsrLeft = mutableStateListOf(0, 0, 0, 0, 0)
-    private val fsrRight = mutableStateListOf(0, 0, 0, 0, 0)
-
+    private var measureJob: Job? = null
+    private var isMeasuring by mutableStateOf(false)
     private var isLeftConnected by mutableStateOf(false)
     private var isRightConnected by mutableStateOf(false)
-    private var isMeasuring by mutableStateOf(false)
+
+    private val fsrLeft = mutableStateListOf(0, 0, 0, 0, 0)
+    private val fsrRight = mutableStateListOf(0, 0, 0, 0, 0)
+    private var squatPostureLeft by mutableStateOf("")
+    private var squatPostureRight by mutableStateOf("")
+
     private var leftWriteChar: BluetoothGattCharacteristic? = null
     private var rightWriteChar: BluetoothGattCharacteristic? = null
-    private var measureJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -97,18 +100,21 @@ class FootActivity : ComponentActivity() {
                     Text(
                         text = if (isLeftConnected) "✅ 왼발 연결됨" else "🔄 왼발 연결 대기 중...",
                         color = if (isLeftConnected) Color.Green else Color.Gray,
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                        modifier = Modifier.align(Alignment.Start).padding(start = 16.dp)
                     )
-
                     Text(
                         text = if (isRightConnected) "✅ 오른발 연결됨" else "🔄 오른발 연결 대기 중...",
                         color = if (isRightConnected) Color.Blue else Color.Gray,
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                        modifier = Modifier.align(Alignment.Start).padding(start = 16.dp)
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    FootImageDisplay(fsrLeftValues = fsrLeft, fsrRightValues = fsrRight)
+                    SquatPostureDisplay(squatPostureLeft, squatPostureRight)
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    FootImageDisplay(fsrLeft, fsrRight)
                 }
             }
         }
@@ -120,20 +126,13 @@ class FootActivity : ComponentActivity() {
         val scanner = adapter.bluetoothLeScanner ?: return
         scanner.startScan(object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
-                val device = result.device
-                val name = device.name ?: return
+                val name = result.device.name ?: return
                 val gattCallback = getGattCallback(name)
                 when (name) {
-                    leftDeviceName -> {
-                        leftGatt = device.connectGatt(this@FootActivity, false, gattCallback)
-                    }
-                    rightDeviceName -> {
-                        rightGatt = device.connectGatt(this@FootActivity, false, gattCallback)
-                    }
+                    leftDeviceName -> leftGatt = result.device.connectGatt(this@FootActivity, false, gattCallback)
+                    rightDeviceName -> rightGatt = result.device.connectGatt(this@FootActivity, false, gattCallback)
                 }
-                if (leftGatt != null && rightGatt != null) {
-                    scanner.stopScan(this)
-                }
+                if (leftGatt != null && rightGatt != null) scanner.stopScan(this)
             }
         })
     }
@@ -154,38 +153,37 @@ class FootActivity : ComponentActivity() {
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            val (serviceUUID, notifyUUID, writeUUID) = if (deviceName == leftDeviceName) {
+            val (svcUUID, notifyUUID, writeUUID) = if (deviceName == leftDeviceName)
                 Triple(leftServiceUUID, leftNotifyUUID, leftWriteUUID)
-            } else {
+            else
                 Triple(rightServiceUUID, rightNotifyUUID, rightWriteUUID)
-            }
 
-            val service = gatt.getService(serviceUUID) ?: return
+            val service = gatt.getService(svcUUID) ?: return
             val notifyChar = service.getCharacteristic(notifyUUID) ?: return
             val writeChar = service.getCharacteristic(writeUUID)
 
             gatt.setCharacteristicNotification(notifyChar, true)
-            val descriptor = notifyChar.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-            descriptor?.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            descriptor?.let { gatt.writeDescriptor(it) }
+            notifyChar.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))?.apply {
+                value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                gatt.writeDescriptor(this)
+            }
 
-            if (deviceName == leftDeviceName) leftWriteChar = writeChar
-            else rightWriteChar = writeChar
+            if (deviceName == leftDeviceName) leftWriteChar = writeChar else rightWriteChar = writeChar
 
             if (leftWriteChar != null && rightWriteChar != null && measureJob == null) {
                 measureJob = CoroutineScope(Dispatchers.IO).launch {
                     isMeasuring = true
                     while (isActive) {
                         delay(1000)
-                        leftWriteChar?.let {
-                            it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                            it.value = "measure".toByteArray()
-                            leftGatt?.writeCharacteristic(it)
+                        leftWriteChar?.apply {
+                            writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                            value = "measure".toByteArray()
+                            leftGatt?.writeCharacteristic(this)
                         }
-                        rightWriteChar?.let {
-                            it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                            it.value = "measure".toByteArray()
-                            rightGatt?.writeCharacteristic(it)
+                        rightWriteChar?.apply {
+                            writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                            value = "measure".toByteArray()
+                            rightGatt?.writeCharacteristic(this)
                         }
                     }
                 }
@@ -198,20 +196,20 @@ class FootActivity : ComponentActivity() {
             if (end > 0) {
                 try {
                     val json = JSONObject(raw.substring(0, end))
-                    if (json.has("fsr_left")) {
-                        val arr = json.getJSONArray("fsr_left")
+                    json.optJSONArray("fsr_left")?.let {
                         runOnUiThread {
-                            for (i in 0 until arr.length()) {
-                                fsrLeft[i] = arr.getInt(i)
-                            }
+                            for (i in 0 until it.length()) fsrLeft[i] = it.getInt(i)
                         }
-                    } else if (json.has("fsr_right")) {
-                        val arr = json.getJSONArray("fsr_right")
+                    }
+                    json.optJSONArray("fsr_right")?.let {
                         runOnUiThread {
-                            for (i in 0 until arr.length()) {
-                                fsrRight[i] = arr.getInt(i)
-                            }
+                            for (i in 0 until it.length()) fsrRight[i] = it.getInt(i)
                         }
+                    }
+                    val posture = json.optString("squat_posture", "")
+                    runOnUiThread {
+                        if (deviceName == leftDeviceName) squatPostureLeft = posture
+                        else if (deviceName == rightDeviceName) squatPostureRight = posture
                     }
                 } catch (e: Exception) {
                     Log.e("BLE", "JSON parse error: ${e.localizedMessage}")
@@ -224,12 +222,9 @@ class FootActivity : ComponentActivity() {
         measureJob?.cancel()
         measureJob = null
         isMeasuring = false
-        leftGatt?.disconnect()
-        rightGatt?.disconnect()
-        leftGatt?.close()
-        rightGatt?.close()
-        isLeftConnected = false
-        isRightConnected = false
+        leftGatt?.disconnect(); rightGatt?.disconnect()
+        leftGatt?.close(); rightGatt?.close()
+        isLeftConnected = false; isRightConnected = false
     }
 }
 
@@ -282,5 +277,27 @@ fun FootImageDisplay(fsrLeftValues: List<Int>, fsrRightValues: List<Int>) {
                 colorFilter = ColorFilter.tint(tint)
             )
         }
+    }
+}
+
+@Composable
+fun SquatPostureDisplay(squatPostureLeft: String, squatPostureRight: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "왼발 스쿼트 자세: $squatPostureLeft",
+            color = Color.Magenta,
+            modifier = Modifier.align(Alignment.Start).padding(bottom = 2.dp)
+        )
+        Text(
+            text = "오른발 스쿼트 자세: $squatPostureRight",
+            color = Color.Magenta,
+            modifier = Modifier.align(Alignment.Start)
+        )
     }
 }
