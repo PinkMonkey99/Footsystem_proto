@@ -104,7 +104,7 @@ class FootActivity : ComponentActivity() {
                     )
                     Text(
                         text = if (isRightConnected) "✅ 오른발 연결됨" else "🔄 오른발 연결 대기 중...",
-                        color = if (isRightConnected) Color.Blue else Color.Gray,
+                        color = if (isRightConnected) Color.Green else Color.Gray,
                         modifier = Modifier.align(Alignment.Start).padding(start = 16.dp)
                     )
 
