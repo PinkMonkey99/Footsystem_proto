@@ -275,14 +275,16 @@ fun RotatingFootImages(leftRoll: Double, rightRoll: Double) {
             horizontalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("왼발 Roll: %.2f°".format(leftRoll), color = Color.Magenta)
+            Text("왼발 Roll: %.2f°".format(leftRoll),
+                color = Color.Magenta,
+                modifier = Modifier.graphicsLayer { rotationZ = 90f})
             Spacer(modifier = Modifier.width(8.dp))
             Image(
                 painter = painterResource(id = R.drawable.foot_angle_l),
                 contentDescription = "왼발 이미지",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
-                    .fillMaxWidth(0.4f)
+                    .fillMaxWidth(0.95f)
                     .aspectRatio(1f)
                     .graphicsLayer { rotationZ = leftRoll.toFloat() }
             )
@@ -293,14 +295,16 @@ fun RotatingFootImages(leftRoll: Double, rightRoll: Double) {
             horizontalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("오른발 Roll: %.2f°".format(rightRoll), color = Color.Magenta)
+            Text("오른발 Roll: %.2f°".format(rightRoll),
+                color = Color.Magenta,
+                modifier = Modifier.graphicsLayer { rotationZ = 90f})
             Spacer(modifier = Modifier.width(8.dp))
             Image(
                 painter = painterResource(id = R.drawable.foot_angle_r),
                 contentDescription = "오른발 이미지",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
-                    .fillMaxWidth(0.4f)
+                    .fillMaxWidth(0.95f)
                     .aspectRatio(1f)
                     .graphicsLayer { rotationZ = rightRoll.toFloat() }
             )
