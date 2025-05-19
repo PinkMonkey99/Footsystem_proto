@@ -1,4 +1,4 @@
-// Footactivity / BLE 순차 검색
+// Footactivity / BLE 동시 검색
 
 package com.example.myapplication
 
@@ -45,12 +45,22 @@ class FootActivity : ComponentActivity() {
 
     private val leftServiceUUID = UUID.fromString("12345678-1234-5678-1234-56789abcdef0")
     private val leftNotifyUUID = UUID.fromString("abcdef01-1234-5678-1234-56789abcdef0")
+    private val leftWriteUUID = UUID.fromString("abcdef02-1234-5678-1234-56789abcdef0")
 
     private val rightServiceUUID = UUID.fromString("87654321-4321-6789-4321-0fedcba98765")
     private val rightNotifyUUID = UUID.fromString("fedcba01-4321-6789-4321-0fedcba98765")
+    private val rightWriteUUID = UUID.fromString("fedcba02-4321-6789-4321-0fedcba98765")
 
     private var leftGatt: BluetoothGatt? = null
     private var rightGatt: BluetoothGatt? = null
+
+    private var leftWriteChar: BluetoothGattCharacteristic? = null
+    private var rightWriteChar: BluetoothGattCharacteristic? = null
+
+    private var retryCount = 0
+    private val maxRetry = 3
+    private var leftFound = false
+    private var rightFound = false
 
     private var isMeasuring by mutableStateOf(false)
     private var isLeftConnected by mutableStateOf(false)
@@ -60,15 +70,6 @@ class FootActivity : ComponentActivity() {
     private val fsrRight = mutableStateListOf(0, 0, 0, 0, 0)
     private var squatPostureLeft by mutableStateOf("")
     private var squatPostureRight by mutableStateOf("")
-
-    private var retryCount = 0
-    private val maxRetry = 3
-    private var isLeftConnecting = false
-    private var isRightConnecting = false
-    private var leftFound = false
-    private var rightFound = false
-
-    private lateinit var scanCallback: ScanCallback
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -110,11 +111,12 @@ class FootActivity : ComponentActivity() {
                     )
                     Text(
                         text = if (isRightConnected) "✅ 오른발 연결됨" else "🔄 오른발 연결 대기 중...",
-                        color = if (isRightConnected) Color.Green else Color.Gray,
+                        color = if (isRightConnected) Color.Blue else Color.Gray,
                         modifier = Modifier.align(Alignment.Start).padding(start = 16.dp)
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
+
                     SquatPostureDisplay(squatPostureLeft, squatPostureRight)
                     Spacer(modifier = Modifier.height(8.dp))
                     FootImageDisplay(fsrLeft, fsrRight)
@@ -124,54 +126,54 @@ class FootActivity : ComponentActivity() {
     }
 
     private fun startBleScan() {
+        if (isMeasuring) return // 중복 방지
+
         val manager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val adapter = manager.adapter ?: return
         val scanner = adapter.bluetoothLeScanner ?: return
 
+        // 초기화
         isMeasuring = true
         isLeftConnected = false
         isRightConnected = false
         leftFound = false
         rightFound = false
 
-        scanCallback = object : ScanCallback() {
+        val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val name = result.device.name ?: return
-                val device = result.device
-
-                if (name == leftDeviceName && !leftFound) {
-                    leftFound = true
-                    isLeftConnecting = true
-                    leftGatt = device.connectGatt(this@FootActivity, false, getGattCallback(name))
-                    Log.d("BLE", "왼발 장치 연결 시도")
-                } else if (name == rightDeviceName && !rightFound && isLeftConnected) {
-                    rightFound = true
-                    isRightConnecting = true
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        rightGatt = device.connectGatt(this@FootActivity, false, getGattCallback(name))
-                        Log.d("BLE", "오른발 장치 연결 시도")
-                    }, 500)
+                val gattCallback = getGattCallback(name)
+                when (name) {
+                    leftDeviceName -> if (!leftFound) {
+                        leftFound = true
+                        leftGatt = result.device.connectGatt(this@FootActivity, false, gattCallback)
+                    }
+                    rightDeviceName -> if (!rightFound) {
+                        rightFound = true
+                        rightGatt = result.device.connectGatt(this@FootActivity, false, gattCallback)
+                    }
                 }
-
-                if (isLeftConnected && isRightConnected) {
-                    scanner.stopScan(scanCallback)
-                    Log.d("BLE", "✅ 양쪽 모두 연결 완료 → 스캔 종료")
+                if (leftFound && rightFound) {
+                    scanner.stopScan(this)
                     retryCount = 0
                 }
             }
         }
 
-        scanner.startScan(scanCallback)
+        scanner.startScan(callback)
 
         Handler(Looper.getMainLooper()).postDelayed({
+            if (!isMeasuring) return@postDelayed // 측정 종료 상태면 무시
+
             if (!isLeftConnected || !isRightConnected) {
-                scanner.stopScan(scanCallback)
+                scanner.stopScan(callback)
                 if (retryCount < maxRetry) {
                     retryCount++
-                    Log.w("BLE", "⏱️ 연결 실패, ${retryCount}번째 재시도")
+                    Log.w("BLE", "⏳ 재시도 $retryCount/$maxRetry")
                     startBleScan()
                 } else {
-                    Log.e("BLE", "❌ 연결 실패: 최대 재시도 초과")
+                    Log.e("BLE", "❌ BLE 연결 실패: 최대 재시도 초과")
+                    isMeasuring = false
                 }
             }
         }, 5000)
@@ -179,21 +181,17 @@ class FootActivity : ComponentActivity() {
 
     private fun getGattCallback(deviceName: String) = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> {
-                    gatt.requestMtu(256)
-                    runOnUiThread {
-                        if (deviceName == leftDeviceName) isLeftConnected = true
-                        else if (deviceName == rightDeviceName) isRightConnected = true
-                    }
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                gatt.requestMtu(256)
+                runOnUiThread {
+                    if (deviceName == leftDeviceName) isLeftConnected = true
+                    else if (deviceName == rightDeviceName) isRightConnected = true
                 }
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    gatt.close()
-                    runOnUiThread {
-                        if (deviceName == leftDeviceName) isLeftConnected = false
-                        else if (deviceName == rightDeviceName) isRightConnected = false
-                    }
-                    Log.d("BLE", "🔌 ${gatt.device.name} 연결 해제됨")
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                gatt.close()
+                runOnUiThread {
+                    if (deviceName == leftDeviceName) isLeftConnected = false
+                    else if (deviceName == rightDeviceName) isRightConnected = false
                 }
             }
         }
@@ -203,18 +201,28 @@ class FootActivity : ComponentActivity() {
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            val (svcUUID, notifyUUID) = if (gatt.device.name == leftDeviceName)
-                Pair(leftServiceUUID, leftNotifyUUID)
+            val (svcUUID, notifyUUID, writeUUID) = if (deviceName == leftDeviceName)
+                Triple(leftServiceUUID, leftNotifyUUID, leftWriteUUID)
             else
-                Pair(rightServiceUUID, rightNotifyUUID)
+                Triple(rightServiceUUID, rightNotifyUUID, rightWriteUUID)
 
             val service = gatt.getService(svcUUID) ?: return
             val notifyChar = service.getCharacteristic(notifyUUID) ?: return
+            val writeChar = service.getCharacteristic(writeUUID)
 
             gatt.setCharacteristicNotification(notifyChar, true)
             notifyChar.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))?.apply {
                 value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                 gatt.writeDescriptor(this)
+            }
+
+            if (deviceName == leftDeviceName) leftWriteChar = writeChar else rightWriteChar = writeChar
+
+            // start 명령 전송
+            writeChar?.apply {
+                writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                value = "start".toByteArray()
+                gatt.writeCharacteristic(this)
             }
         }
 
@@ -240,7 +248,7 @@ class FootActivity : ComponentActivity() {
                         else if (gatt.device.name == rightDeviceName) squatPostureRight = posture
                     }
                 } catch (e: Exception) {
-                    Log.e("BLE", "JSON parse error: ${e.localizedMessage}")
+                    Log.e("BLE", "JSON Parse 오류: ${e.localizedMessage}")
                 }
             }
         }
@@ -248,10 +256,26 @@ class FootActivity : ComponentActivity() {
 
     private fun stopMeasurement() {
         isMeasuring = false
-        leftGatt?.disconnect()
-        rightGatt?.disconnect()
+
+        leftWriteChar?.apply {
+            writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            value = "stop".toByteArray()
+            leftGatt?.writeCharacteristic(this)
+        }
+
+        rightWriteChar?.apply {
+            writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            value = "stop".toByteArray()
+            rightGatt?.writeCharacteristic(this)
+        }
+
+        leftGatt?.disconnect(); rightGatt?.disconnect()
+        leftGatt?.close(); rightGatt?.close()
+        isLeftConnected = false; isRightConnected = false
     }
 }
+
+// UI 구성 함수들
 
 @Composable
 fun SquatPostureDisplay(squatPostureLeft: String, squatPostureRight: String) {

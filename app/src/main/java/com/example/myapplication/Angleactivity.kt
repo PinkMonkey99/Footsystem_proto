@@ -1,4 +1,5 @@
-// AngleActivity / BLE 순차 연결 구조로 수정
+// Angleactivity / BLE 동시 검색
+
 package com.example.myapplication
 
 import android.Manifest
@@ -57,8 +58,6 @@ class AngleActivity : ComponentActivity() {
 
     private var retryCount = 0
     private val maxRetry = 3
-    private var isLeftConnecting = false
-    private var isRightConnecting = false
     private var leftFound = false
     private var rightFound = false
 
@@ -68,8 +67,6 @@ class AngleActivity : ComponentActivity() {
 
     private var leftRoll by mutableStateOf(0.0)
     private var rightRoll by mutableStateOf(0.0)
-
-    private lateinit var scanCallback: ScanCallback
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -123,6 +120,8 @@ class AngleActivity : ComponentActivity() {
     }
 
     private fun startBleScan() {
+        if (isMeasuring) return
+
         val manager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val adapter = manager.adapter ?: return
         val scanner = adapter.bluetoothLeScanner ?: return
@@ -133,44 +132,41 @@ class AngleActivity : ComponentActivity() {
         leftFound = false
         rightFound = false
 
-        scanCallback = object : ScanCallback() {
+        val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val name = result.device.name ?: return
-                val device = result.device
-
-                if (name == leftDeviceName && !leftFound) {
-                    leftFound = true
-                    isLeftConnecting = true
-                    leftGatt = device.connectGatt(this@AngleActivity, false, getGattCallback(name))
-                    Log.d("BLE", "왼발 장치 연결 시도")
-                } else if (name == rightDeviceName && !rightFound && isLeftConnected) {
-                    rightFound = true
-                    isRightConnecting = true
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        rightGatt = device.connectGatt(this@AngleActivity, false, getGattCallback(name))
-                        Log.d("BLE", "오른발 장치 연결 시도")
-                    }, 500)
+                val gattCallback = getGattCallback(name)
+                when (name) {
+                    leftDeviceName -> if (!leftFound) {
+                        leftFound = true
+                        leftGatt = result.device.connectGatt(this@AngleActivity, false, gattCallback)
+                    }
+                    rightDeviceName -> if (!rightFound) {
+                        rightFound = true
+                        rightGatt = result.device.connectGatt(this@AngleActivity, false, gattCallback)
+                    }
                 }
-
-                if (isLeftConnected && isRightConnected) {
-                    scanner.stopScan(scanCallback)
-                    Log.d("BLE", "✅ 양쪽 모두 연결 완료 → 스캔 종료")
+                if (leftFound && rightFound) {
+                    scanner.stopScan(this)
                     retryCount = 0
                 }
             }
         }
 
-        scanner.startScan(scanCallback)
+        scanner.startScan(callback)
 
         Handler(Looper.getMainLooper()).postDelayed({
+            if (!isMeasuring) return@postDelayed
+
             if (!isLeftConnected || !isRightConnected) {
-                scanner.stopScan(scanCallback)
+                scanner.stopScan(callback)
                 if (retryCount < maxRetry) {
                     retryCount++
-                    Log.w("BLE", "⏱️ 연결 실패, ${retryCount}번째 재시도")
+                    Log.w("BLE", "⏳ 재시도 $retryCount/$maxRetry")
                     startBleScan()
                 } else {
-                    Log.e("BLE", "❌ 연결 실패: 최대 재시도 초과")
+                    Log.e("BLE", "❌ BLE 연결 실패: 최대 재시도 초과")
+                    isMeasuring = false
                 }
             }
         }, 5000)
@@ -178,21 +174,17 @@ class AngleActivity : ComponentActivity() {
 
     private fun getGattCallback(deviceName: String) = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> {
-                    gatt.requestMtu(256)
-                    runOnUiThread {
-                        if (deviceName == leftDeviceName) isLeftConnected = true
-                        else if (deviceName == rightDeviceName) isRightConnected = true
-                    }
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                gatt.requestMtu(256)
+                runOnUiThread {
+                    if (deviceName == leftDeviceName) isLeftConnected = true
+                    else if (deviceName == rightDeviceName) isRightConnected = true
                 }
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    gatt.close()
-                    runOnUiThread {
-                        if (deviceName == leftDeviceName) isLeftConnected = false
-                        else if (deviceName == rightDeviceName) isRightConnected = false
-                    }
-                    Log.d("BLE", "🔌 ${gatt.device.name} 연결 해제됨")
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                gatt.close()
+                runOnUiThread {
+                    if (deviceName == leftDeviceName) isLeftConnected = false
+                    else if (deviceName == rightDeviceName) isRightConnected = false
                 }
             }
         }
@@ -202,7 +194,7 @@ class AngleActivity : ComponentActivity() {
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            val (svcUUID, notifyUUID, writeUUID) = if (gatt.device.name == leftDeviceName)
+            val (svcUUID, notifyUUID, writeUUID) = if (deviceName == leftDeviceName)
                 Triple(leftServiceUUID, leftNotifyUUID, leftWriteUUID)
             else
                 Triple(rightServiceUUID, rightNotifyUUID, rightWriteUUID)
@@ -217,7 +209,7 @@ class AngleActivity : ComponentActivity() {
                 gatt.writeDescriptor(this)
             }
 
-            if (gatt.device.name == leftDeviceName) leftWriteChar = writeChar else rightWriteChar = writeChar
+            if (deviceName == leftDeviceName) leftWriteChar = writeChar else rightWriteChar = writeChar
 
             // start 명령 전송
             writeChar?.apply {
@@ -236,8 +228,8 @@ class AngleActivity : ComponentActivity() {
                     val roll = json.optDouble("roll", Double.NaN)
                     if (!roll.isNaN()) {
                         runOnUiThread {
-                            if (gatt.device.name == leftDeviceName) leftRoll = roll
-                            else if (gatt.device.name == rightDeviceName) rightRoll = roll
+                            if (deviceName == leftDeviceName) leftRoll = roll
+                            else if (deviceName == rightDeviceName) rightRoll = roll
                         }
                     }
                 } catch (e: Exception) {
