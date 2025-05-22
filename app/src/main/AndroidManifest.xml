@@ -25,6 +25,12 @@
             android:name=".AngleActivity"
             android:exported="false" />
         <activity
+            android:name=".PostureCorrectionActivity"
+            android:exported="false" />
+        <activity
+            android:name=".DeveloperDataActivity"
+            android:exported="false" />
+        <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"

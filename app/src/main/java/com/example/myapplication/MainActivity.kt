@@ -29,6 +29,14 @@ class MainActivity : ComponentActivity() {
                     onStartAngleActivity = {
                         val intent = Intent(this, AngleActivity::class.java)
                         startActivity(intent)
+                    },
+                    onStartPostureCorrection = {
+                        val intent = Intent(this, PostureCorrectionActivity::class.java)
+                        startActivity(intent)
+                    },
+                    onStartDeveloperData = {
+                        val intent = Intent(this, DeveloperDataActivity::class.java)
+                        startActivity(intent)
                     }
                 )
             }
@@ -39,7 +47,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen(
     onStartFootActivity: () -> Unit,
-    onStartAngleActivity: () -> Unit
+    onStartAngleActivity: () -> Unit,
+    onStartPostureCorrection: () -> Unit = {}, // 새로 추가한 콜백
+    onStartDeveloperData: () -> Unit = {}     // 새로 추가한 콜백
 ) {
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
@@ -54,8 +64,19 @@ fun MainScreen(
                 Text("족압 측정")
             }
             Spacer(modifier = Modifier.height(16.dp))
+
             Button(onClick = onStartAngleActivity) {
                 Text("발 각도")
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(onClick = onStartPostureCorrection) {
+                Text("자세 교정")
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(onClick = onStartDeveloperData) {
+                Text("개발자 데이터")
             }
         }
     }
