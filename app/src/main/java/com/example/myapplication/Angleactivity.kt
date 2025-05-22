@@ -40,7 +40,7 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 class AngleActivity : ComponentActivity() {
 
-    private val leftDeviceName = "ESP32-S3 BLE Shoe left"
+    private val leftDeviceName = "ESP32-S3 BLE left shoe"
     private val rightDeviceName = "ESP32-S3 BLE right shoe"
 
     private val leftServiceUUID = UUID.fromString("12345678-1234-5678-1234-56789abcdef0")
@@ -65,8 +65,8 @@ class AngleActivity : ComponentActivity() {
     private var isLeftConnected by mutableStateOf(false)
     private var isRightConnected by mutableStateOf(false)
 
-    private var leftRoll by mutableStateOf(0.0)
-    private var rightRoll by mutableStateOf(0.0)
+    private var leftYaw by mutableStateOf(0.0)
+    private var rightYaw by mutableStateOf(0.0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -113,7 +113,7 @@ class AngleActivity : ComponentActivity() {
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    RotatingFootImages(leftRoll = leftRoll, rightRoll = rightRoll)
+                    RotatingFootImages(leftYaw = leftYaw, rightYaw = rightYaw)
                 }
             }
         }
@@ -211,7 +211,6 @@ class AngleActivity : ComponentActivity() {
 
             if (deviceName == leftDeviceName) leftWriteChar = writeChar else rightWriteChar = writeChar
 
-            // start 명령 전송
             writeChar?.apply {
                 writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                 value = "start".toByteArray()
@@ -225,11 +224,11 @@ class AngleActivity : ComponentActivity() {
             if (end > 0) {
                 try {
                     val json = JSONObject(raw.substring(0, end))
-                    val roll = json.optDouble("roll", Double.NaN)
-                    if (!roll.isNaN()) {
+                    val yaw = json.optDouble("yaw_angle", Double.NaN)
+                    if (!yaw.isNaN()) {
                         runOnUiThread {
-                            if (deviceName == leftDeviceName) leftRoll = roll
-                            else if (deviceName == rightDeviceName) rightRoll = roll
+                            if (deviceName == leftDeviceName) leftYaw = yaw
+                            else if (deviceName == rightDeviceName) rightYaw = yaw
                         }
                     }
                 } catch (e: Exception) {
@@ -261,7 +260,7 @@ class AngleActivity : ComponentActivity() {
 }
 
 @Composable
-fun RotatingFootImages(leftRoll: Double, rightRoll: Double) {
+fun RotatingFootImages(leftYaw: Double, rightYaw: Double) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -275,9 +274,9 @@ fun RotatingFootImages(leftRoll: Double, rightRoll: Double) {
             horizontalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("왼발 Roll: %.2f°".format(leftRoll),
+            Text("왼발 Yaw: %.2f°".format(leftYaw),
                 color = Color.Magenta,
-                modifier = Modifier.graphicsLayer { rotationZ = 90f})
+                modifier = Modifier.graphicsLayer { rotationZ = 90f })
             Spacer(modifier = Modifier.width(8.dp))
             Image(
                 painter = painterResource(id = R.drawable.foot_angle_l),
@@ -286,7 +285,7 @@ fun RotatingFootImages(leftRoll: Double, rightRoll: Double) {
                 modifier = Modifier
                     .fillMaxWidth(0.95f)
                     .aspectRatio(1f)
-                    .graphicsLayer { rotationZ = leftRoll.toFloat() }
+                    .graphicsLayer { rotationZ = leftYaw.toFloat() }
             )
         }
 
@@ -295,9 +294,9 @@ fun RotatingFootImages(leftRoll: Double, rightRoll: Double) {
             horizontalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("오른발 Roll: %.2f°".format(rightRoll),
+            Text("오른발 Yaw: %.2f°".format(rightYaw),
                 color = Color.Magenta,
-                modifier = Modifier.graphicsLayer { rotationZ = 90f})
+                modifier = Modifier.graphicsLayer { rotationZ = 90f })
             Spacer(modifier = Modifier.width(8.dp))
             Image(
                 painter = painterResource(id = R.drawable.foot_angle_r),
@@ -306,7 +305,7 @@ fun RotatingFootImages(leftRoll: Double, rightRoll: Double) {
                 modifier = Modifier
                     .fillMaxWidth(0.95f)
                     .aspectRatio(1f)
-                    .graphicsLayer { rotationZ = rightRoll.toFloat() }
+                    .graphicsLayer { rotationZ = rightYaw.toFloat() }
             )
         }
     }

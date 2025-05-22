@@ -40,7 +40,7 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 class FootActivity : ComponentActivity() {
 
-    private val leftDeviceName = "ESP32-S3 BLE Shoe left"
+    private val leftDeviceName = "ESP32-S3 BLE left shoe"
     private val rightDeviceName = "ESP32-S3 BLE right shoe"
 
     private val leftServiceUUID = UUID.fromString("12345678-1234-5678-1234-56789abcdef0")
@@ -111,7 +111,7 @@ class FootActivity : ComponentActivity() {
                     )
                     Text(
                         text = if (isRightConnected) "✅ 오른발 연결됨" else "🔄 오른발 연결 대기 중...",
-                        color = if (isRightConnected) Color.Blue else Color.Gray,
+                        color = if (isRightConnected) Color.Green else Color.Gray,
                         modifier = Modifier.align(Alignment.Start).padding(start = 16.dp)
                     )
 
@@ -301,52 +301,75 @@ fun SquatPostureDisplay(squatPostureLeft: String, squatPostureRight: String) {
 
 @Composable
 fun FootImageDisplay(fsrLeftValues: List<Int>, fsrRightValues: List<Int>) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Image(
-            painter = painterResource(id = R.drawable.foots_2),
-            contentDescription = "Foot Image",
-            contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize()
-        )
-
-        val leftImages = listOf(
-            R.drawable.foot_l_fsr4,
-            R.drawable.foot_l_fsr5,
-            R.drawable.foot_l_fsr6,
-            R.drawable.foot_l_fsr7,
-            R.drawable.foot_l_fsr15
-        )
-
-        fsrLeftValues.forEachIndexed { index, value ->
-            val alpha = (value.coerceIn(0, 5000).toFloat() / 5000f)
-            val tint = Color.Red.copy(alpha = alpha)
+    Column(modifier = Modifier.fillMaxSize()) {
+        // 왼발
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
             Image(
-                painter = painterResource(leftImages[index]),
-                contentDescription = "Left FSR $index",
-                modifier = Modifier.fillMaxSize(),
+                painter = painterResource(id = R.drawable.foot_l), // 왼발 배경
+                contentDescription = "Left Foot Base",
                 contentScale = ContentScale.Fit,
-                colorFilter = ColorFilter.tint(tint)
+                modifier = Modifier.fillMaxSize()
             )
+
+            val leftImages = listOf(
+                R.drawable.foot_angle_l_fsr4,
+                R.drawable.foot_angle_l_fsr5,
+                R.drawable.foot_angle_l_fsr6,
+                R.drawable.foot_angle_l_fsr7,
+                R.drawable.foot_angle_l_fsr15
+            )
+
+            fsrLeftValues.forEachIndexed { index, value ->
+                val alpha = (value.coerceIn(0, 5000).toFloat() / 5000f)
+                val tint = Color.Red.copy(alpha = alpha)
+                Image(
+                    painter = painterResource(id = leftImages[index]),
+                    contentDescription = "Left FSR $index",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                    colorFilter = ColorFilter.tint(tint)
+                )
+            }
         }
 
-        val rightImages = listOf(
-            R.drawable.foot_r_fsr4,
-            R.drawable.foot_r_fsr5,
-            R.drawable.foot_r_fsr6,
-            R.drawable.foot_r_fsr7,
-            R.drawable.foot_r_fsr15
-        )
-
-        fsrRightValues.forEachIndexed { index, value ->
-            val alpha = (value.coerceIn(0, 5000).toFloat() / 5000f)
-            val tint = Color.Blue.copy(alpha = alpha)
+        // 오른발
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
             Image(
-                painter = painterResource(rightImages[index]),
-                contentDescription = "Right FSR $index",
-                modifier = Modifier.fillMaxSize(),
+                painter = painterResource(id = R.drawable.foot_r), // 오른발 배경
+                contentDescription = "Right Foot Base",
                 contentScale = ContentScale.Fit,
-                colorFilter = ColorFilter.tint(tint)
+                modifier = Modifier.fillMaxSize()
             )
+
+            val rightImages = listOf(
+                R.drawable.foot_angle_r_fsr4,
+                R.drawable.foot_angle_r_fsr5,
+                R.drawable.foot_angle_r_fsr6,
+                R.drawable.foot_angle_r_fsr7,
+                R.drawable.foot_angle_r_fsr15
+            )
+
+            fsrRightValues.forEachIndexed { index, value ->
+                val alpha = (value.coerceIn(0, 5000).toFloat() / 5000f)
+                val tint = Color.Blue.copy(alpha = alpha)
+                Image(
+                    painter = painterResource(id = rightImages[index]),
+                    contentDescription = "Right FSR $index",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                    colorFilter = ColorFilter.tint(tint)
+                )
+            }
         }
     }
 }
