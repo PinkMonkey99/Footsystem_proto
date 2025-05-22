@@ -16,15 +16,19 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.myapplication.ui.theme.MyApplicationTheme
+import org.json.JSONObject
 import java.util.*
 
 @SuppressLint("MissingPermission")
@@ -48,9 +52,17 @@ class DeveloperDataActivity : ComponentActivity() {
     private var leftWriteChar: BluetoothGattCharacteristic? = null
     private var rightWriteChar: BluetoothGattCharacteristic? = null
 
+    private var retryCount = 0
+    private val maxRetry = 3
+    private var leftFound = false
+    private var rightFound = false
+
     private var isMeasuring by mutableStateOf(false)
-    private var rawJsonLeft by mutableStateOf("왼발 데이터 없음")
-    private var rawJsonRight by mutableStateOf("오른발 데이터 없음")
+    private var isLeftConnected by mutableStateOf(false)
+    private var isRightConnected by mutableStateOf(false)
+
+    private var leftJsonText by mutableStateOf("")
+    private var rightJsonText by mutableStateOf("")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,7 +82,7 @@ class DeveloperDataActivity : ComponentActivity() {
             MyApplicationTheme {
                 Column(modifier = Modifier.fillMaxSize()) {
                     TopAppBar(
-                        title = { Text("Developer Data View") },
+                        title = { Text("Foot Measurement") },
                         navigationIcon = {
                             IconButton(onClick = { finish() }) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
@@ -82,27 +94,57 @@ class DeveloperDataActivity : ComponentActivity() {
                             Button(onClick = { stopMeasurement() }, enabled = isMeasuring) { Text("측정종료") }
                         }
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("왼발 JSON: $rawJsonLeft", modifier = Modifier.padding(16.dp))
-                    Text("오른발 JSON: $rawJsonRight", modifier = Modifier.padding(16.dp))
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = if (isLeftConnected) "✅ 왼발 연결됨" else "🔄 왼발 연결 대기 중...",
+                        color = if (isLeftConnected) Color.Green else Color.Gray,
+                        modifier = Modifier.align(Alignment.Start).padding(start = 16.dp)
+                    )
+                    Text(
+                        text = if (isRightConnected) "✅ 오른발 연결됨" else "🔄 오른발 연결 대기 중...",
+                        color = if (isRightConnected) Color.Green else Color.Gray,
+                        modifier = Modifier.align(Alignment.Start).padding(start = 16.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    JsonDisplay(leftJsonText, rightJsonText)
                 }
             }
         }
     }
 
     private fun startBleScan() {
-        isMeasuring = true
+        if (isMeasuring) return
+
         val manager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val adapter = manager.adapter ?: return
         val scanner = adapter.bluetoothLeScanner ?: return
+
+        isMeasuring = true
+        isLeftConnected = false
+        isRightConnected = false
+        leftFound = false
+        rightFound = false
 
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val name = result.device.name ?: return
                 val gattCallback = getGattCallback(name)
                 when (name) {
-                    leftDeviceName -> leftGatt = result.device.connectGatt(this@DeveloperDataActivity, false, gattCallback)
-                    rightDeviceName -> rightGatt = result.device.connectGatt(this@DeveloperDataActivity, false, gattCallback)
+                    leftDeviceName -> if (!leftFound) {
+                        leftFound = true
+                        leftGatt = result.device.connectGatt(this@DeveloperDataActivity, false, gattCallback)
+                    }
+                    rightDeviceName -> if (!rightFound) {
+                        rightFound = true
+                        rightGatt = result.device.connectGatt(this@DeveloperDataActivity, false, gattCallback)
+                    }
+                }
+                if (leftFound && rightFound) {
+                    scanner.stopScan(this)
+                    retryCount = 0
                 }
             }
         }
@@ -110,13 +152,87 @@ class DeveloperDataActivity : ComponentActivity() {
         scanner.startScan(callback)
 
         Handler(Looper.getMainLooper()).postDelayed({
-            scanner.stopScan(callback)
+            if (!isMeasuring) return@postDelayed
+            if (!isLeftConnected || !isRightConnected) {
+                scanner.stopScan(callback)
+                if (retryCount < maxRetry) {
+                    retryCount++
+                    Log.w("BLE", "⏳ 재시도 $retryCount/$maxRetry")
+                    startBleScan()
+                } else {
+                    Log.e("BLE", "❌ BLE 연결 실패: 최대 재시도 초과")
+                    isMeasuring = false
+                }
+            }
         }, 5000)
+    }
+
+    private fun getGattCallback(deviceName: String) = object : BluetoothGattCallback() {
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                gatt.requestMtu(256)
+                runOnUiThread {
+                    if (deviceName == leftDeviceName) isLeftConnected = true
+                    else if (deviceName == rightDeviceName) isRightConnected = true
+                }
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                gatt.close()
+                runOnUiThread {
+                    if (deviceName == leftDeviceName) isLeftConnected = false
+                    else if (deviceName == rightDeviceName) isRightConnected = false
+                }
+            }
+        }
+
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            gatt.discoverServices()
+        }
+
+        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            val (svcUUID, notifyUUID, writeUUID) = if (deviceName == leftDeviceName)
+                Triple(leftServiceUUID, leftNotifyUUID, leftWriteUUID)
+            else
+                Triple(rightServiceUUID, rightNotifyUUID, rightWriteUUID)
+
+            val service = gatt.getService(svcUUID) ?: return
+            val notifyChar = service.getCharacteristic(notifyUUID) ?: return
+            val writeChar = service.getCharacteristic(writeUUID)
+
+            gatt.setCharacteristicNotification(notifyChar, true)
+            notifyChar.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))?.apply {
+                value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                gatt.writeDescriptor(this)
+            }
+
+            if (deviceName == leftDeviceName) leftWriteChar = writeChar else rightWriteChar = writeChar
+
+            writeChar?.apply {
+                writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                value = "start".toByteArray()
+                gatt.writeCharacteristic(this)
+            }
+        }
+
+        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            val raw = String(characteristic.value, Charsets.UTF_8)
+            val end = raw.indexOf('}') + 1
+            if (end > 0) {
+                try {
+                    val json = JSONObject(raw.substring(0, end))
+                    val jsonText = json.toString(2)
+                    runOnUiThread {
+                        if (gatt.device.name == leftDeviceName) leftJsonText = jsonText
+                        else if (gatt.device.name == rightDeviceName) rightJsonText = jsonText
+                    }
+                } catch (e: Exception) {
+                    Log.e("BLE", "JSON Parse 오류: ${e.localizedMessage}")
+                }
+            }
+        }
     }
 
     private fun stopMeasurement() {
         isMeasuring = false
-
         leftWriteChar?.apply {
             writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
             value = "stop".toByteArray()
@@ -127,51 +243,27 @@ class DeveloperDataActivity : ComponentActivity() {
             value = "stop".toByteArray()
             rightGatt?.writeCharacteristic(this)
         }
-
         leftGatt?.disconnect(); rightGatt?.disconnect()
         leftGatt?.close(); rightGatt?.close()
+        isLeftConnected = false; isRightConnected = false
     }
+}
 
-    private fun getGattCallback(deviceName: String) = object : BluetoothGattCallback() {
-        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                gatt.requestMtu(256)
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                gatt.close()
-            }
-        }
+@Composable
+fun JsonDisplay(leftJson: String, rightJson: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("📦 왼발 JSON 데이터", color = Color.Red, style = MaterialTheme.typography.titleMedium)
+        Text(leftJson.ifEmpty { "데이터 수신 대기 중..." }, color = Color.LightGray)
 
-        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-            gatt.discoverServices()
-        }
+        Divider()
 
-        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            val (svcUUID, notifyUUID, writeUUID) = if (gatt.device.name == leftDeviceName)
-                Triple(leftServiceUUID, leftNotifyUUID, leftWriteUUID)
-            else Triple(rightServiceUUID, rightNotifyUUID, rightWriteUUID)
-
-            val notifyChar = gatt.getService(svcUUID)?.getCharacteristic(notifyUUID) ?: return
-            val writeChar = gatt.getService(svcUUID)?.getCharacteristic(writeUUID)
-
-            gatt.setCharacteristicNotification(notifyChar, true)
-            notifyChar.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))?.let {
-                it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                gatt.writeDescriptor(it)
-            }
-
-            if (gatt.device.name == leftDeviceName) leftWriteChar = writeChar else rightWriteChar = writeChar
-
-            writeChar?.apply {
-                writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                value = "start".toByteArray()
-                gatt.writeCharacteristic(this)
-            }
-        }
-
-        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            val jsonRaw = String(characteristic.value, Charsets.UTF_8)
-            if (gatt.device.name == leftDeviceName) rawJsonLeft = jsonRaw
-            else if (gatt.device.name == rightDeviceName) rawJsonRight = jsonRaw
-        }
+        Text("📦 오른발 JSON 데이터", color = Color.Blue, style = MaterialTheme.typography.titleMedium)
+        Text(rightJson.ifEmpty { "데이터 수신 대기 중..." }, color = Color.LightGray)
     }
 }
