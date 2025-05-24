@@ -87,37 +87,66 @@ class PostureCorrectionActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme {
                 Column(modifier = Modifier.fillMaxSize()) {
-                    TopAppBar(
-                        title = { Text("Posture Correction") },
-                        navigationIcon = {
-                            IconButton(onClick = { finish() }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+
+                    // 상단 앱바 + 측정 버튼 2개
+                    Column {
+                        TopAppBar(
+                            title = { Text("Posture Correction") },
+                            navigationIcon = {
+                                IconButton(onClick = { finish() }) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                                }
+                            },
+                            actions = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Button(
+                                        onClick = { startBleScan() },
+                                        enabled = !isMeasuring
+                                    ) {
+                                        Text("측정시작")
+                                    }
+
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    Button(
+                                        onClick = { stopMeasurement() },
+                                        enabled = isMeasuring
+                                    ) {
+                                        Text("측정종료")
+                                    }
+                                }
                             }
-                        },
-                        actions = {
+                        )
+
+                        // 왼발/오른발 연결 상태 + Reset 버튼 (같은 줄에 배치)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = if (isLeftConnected) "✅ 왼발 연결됨" else "🔄 왼발 연결 대기 중...",
+                                    color = if (isLeftConnected) Color.Green else Color.Gray
+                                )
+                                Text(
+                                    text = if (isRightConnected) "✅ 오른발 연결됨" else "🔄 오른발 연결 대기 중...",
+                                    color = if (isRightConnected) Color.Green else Color.Gray
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.weight(1f))
+
                             Button(onClick = {
-                                startBleScan()
-                            }, enabled = !isMeasuring) { Text("측정시작") }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Button(onClick = { stopMeasurement() }, enabled = isMeasuring) { Text("측정종료") }
+                                sendResetCommand()
+                            }) {
+                                Text("Reset")
+                            }
                         }
-                    )
+                    }
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = if (isLeftConnected) "✅ 왼발 연결됨" else "🔄 왼발 연결 대기 중...",
-                        color = if (isLeftConnected) Color.Green else Color.Gray,
-                        modifier = Modifier.padding(start = 16.dp)
-                    )
-                    Text(
-                        text = if (isRightConnected) "✅ 오른발 연결됨" else "🔄 오른발 연결 대기 중...",
-                        color = if (isRightConnected) Color.Green else Color.Gray,
-                        modifier = Modifier.padding(start = 16.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
+                    // 발 센서 시각화 및 자세 텍스트 영역
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -143,6 +172,7 @@ class PostureCorrectionActivity : ComponentActivity() {
                                     Text("왼발 스쿼트 자세: $squatPostureLeft", color = Color.Magenta)
                                 }
                             }
+
                             Box(
                                 modifier = Modifier
                                     .weight(0.7f)
@@ -173,6 +203,7 @@ class PostureCorrectionActivity : ComponentActivity() {
                                     Text("오른발 스쿼트 자세: $squatPostureRight", color = Color.Magenta)
                                 }
                             }
+
                             Box(
                                 modifier = Modifier
                                     .weight(0.7f)
@@ -185,6 +216,24 @@ class PostureCorrectionActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+
+
+    }
+
+    private fun sendResetCommand() {
+        val resetCommand = "reset".toByteArray()
+
+        leftWriteChar?.apply {
+            value = resetCommand
+            writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            leftGatt?.writeCharacteristic(this)
+        }
+
+        rightWriteChar?.apply {
+            value = resetCommand
+            writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            rightGatt?.writeCharacteristic(this)
         }
     }
 
