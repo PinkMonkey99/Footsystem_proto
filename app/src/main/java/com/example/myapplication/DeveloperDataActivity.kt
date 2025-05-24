@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.myapplication.ui.theme.MyApplicationTheme
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.*
 
@@ -219,10 +220,28 @@ class DeveloperDataActivity : ComponentActivity() {
             if (end > 0) {
                 try {
                     val json = JSONObject(raw.substring(0, end))
-                    val jsonText = json.toString(2)
+
+                    val fsr = json.optJSONArray("fsr_left") ?: json.optJSONArray("fsr_right")
+                    val norm = json.optJSONArray("final_normalized_left") ?: json.optJSONArray("final_normalized_right")
+                    val posture = json.optJSONArray("posture_left") ?: json.optJSONArray("posture_right")
+                    val yawRate = json.optDouble("yaw_rate", 0.0)
+                    val yawAngle = json.optDouble("yaw_angle", 0.0)
+                    val squatPosture = json.optString("squat_posture", "")
+
+                    val formatted = buildString {
+                        append("{\n")
+                        if (fsr != null) append("  \"fsr\": ${fsr.toListString()},\n")
+                        if (norm != null) append("  \"final_normalized\": ${norm.toListString()},\n")
+                        if (posture != null) append("  \"posture\": ${posture.toListString()},\n")
+                        append("  \"yaw_rate\": $yawRate,\n")
+                        append("  \"yaw_angle\": $yawAngle,\n")
+                        append("  \"squat_posture\": \"$squatPosture\"\n")
+                        append("}")
+                    }
+
                     runOnUiThread {
-                        if (gatt.device.name == leftDeviceName) leftJsonText = jsonText
-                        else if (gatt.device.name == rightDeviceName) rightJsonText = jsonText
+                        if (gatt.device.name == leftDeviceName) leftJsonText = formatted
+                        else if (gatt.device.name == rightDeviceName) rightJsonText = formatted
                     }
                 } catch (e: Exception) {
                     Log.e("BLE", "JSON Parse 오류: ${e.localizedMessage}")
@@ -265,5 +284,13 @@ fun JsonDisplay(leftJson: String, rightJson: String) {
 
         Text("📦 오른발 JSON 데이터", color = Color.Blue, style = MaterialTheme.typography.titleMedium)
         Text(rightJson.ifEmpty { "데이터 수신 대기 중..." }, color = Color.LightGray)
+    }
+}
+
+// ✅ JSONArray 확장 함수 정의
+fun JSONArray.toListString(): String {
+    return (0 until length()).joinToString(prefix = "[", postfix = "]") { i ->
+        val item = get(i)
+        if (item is String) "\"$item\"" else item.toString()
     }
 }
