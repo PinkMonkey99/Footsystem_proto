@@ -256,6 +256,9 @@ class AngleActivity : ComponentActivity() {
         leftGatt?.disconnect(); rightGatt?.disconnect()
         leftGatt?.close(); rightGatt?.close()
         isLeftConnected = false; isRightConnected = false
+
+        leftYaw = 0.0
+        rightYaw = 0.0
     }
 }
 
