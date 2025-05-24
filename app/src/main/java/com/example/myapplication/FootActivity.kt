@@ -126,13 +126,11 @@ class FootActivity : ComponentActivity() {
     }
 
     private fun startBleScan() {
-        if (isMeasuring) return // 중복 방지
+        if (isMeasuring) return
 
-        val manager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        val adapter = manager.adapter ?: return
+        val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter ?: return
         val scanner = adapter.bluetoothLeScanner ?: return
 
-        // 초기화
         isMeasuring = true
         isLeftConnected = false
         isRightConnected = false
@@ -163,8 +161,7 @@ class FootActivity : ComponentActivity() {
         scanner.startScan(callback)
 
         Handler(Looper.getMainLooper()).postDelayed({
-            if (!isMeasuring) return@postDelayed // 측정 종료 상태면 무시
-
+            if (!isMeasuring) return@postDelayed
             if (!isLeftConnected || !isRightConnected) {
                 scanner.stopScan(callback)
                 if (retryCount < maxRetry) {
@@ -218,7 +215,6 @@ class FootActivity : ComponentActivity() {
 
             if (deviceName == leftDeviceName) leftWriteChar = writeChar else rightWriteChar = writeChar
 
-            // start 명령 전송
             writeChar?.apply {
                 writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                 value = "start".toByteArray()
@@ -272,10 +268,13 @@ class FootActivity : ComponentActivity() {
         leftGatt?.disconnect(); rightGatt?.disconnect()
         leftGatt?.close(); rightGatt?.close()
         isLeftConnected = false; isRightConnected = false
+
+        for (i in 0 until fsrLeft.size) fsrLeft[i] = 0
+        for (i in 0 until fsrRight.size) fsrRight[i] = 0
+        squatPostureLeft = ""
+        squatPostureRight = ""
     }
 }
-
-// UI 구성 함수들
 
 @Composable
 fun SquatPostureDisplay(squatPostureLeft: String, squatPostureRight: String) {
@@ -286,36 +285,21 @@ fun SquatPostureDisplay(squatPostureLeft: String, squatPostureRight: String) {
         verticalArrangement = Arrangement.spacedBy(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = "왼발 스쿼트 자세: $squatPostureLeft",
-            color = Color.Magenta,
-            modifier = Modifier.align(Alignment.Start).padding(bottom = 2.dp)
-        )
-        Text(
-            text = "오른발 스쿼트 자세: $squatPostureRight",
-            color = Color.Magenta,
-            modifier = Modifier.align(Alignment.Start)
-        )
+        Text("왼발 스쿼트 자세: $squatPostureLeft", color = Color.Magenta)
+        Text("오른발 스쿼트 자세: $squatPostureRight", color = Color.Magenta)
     }
 }
 
 @Composable
 fun FootImageDisplay(fsrLeftValues: List<Int>, fsrRightValues: List<Int>) {
     Column(modifier = Modifier.fillMaxSize()) {
-        // 왼발
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
+        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Image(
-                painter = painterResource(id = R.drawable.foot_l), // 왼발 배경
+                painter = painterResource(id = R.drawable.foot_l),
                 contentDescription = "Left Foot Base",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize()
             )
-
             val leftImages = listOf(
                 R.drawable.foot_angle_l_fsr4,
                 R.drawable.foot_angle_l_fsr5,
@@ -323,7 +307,6 @@ fun FootImageDisplay(fsrLeftValues: List<Int>, fsrRightValues: List<Int>) {
                 R.drawable.foot_angle_l_fsr7,
                 R.drawable.foot_angle_l_fsr15
             )
-
             fsrLeftValues.forEachIndexed { index, value ->
                 val alpha = (value.coerceIn(0, 5000).toFloat() / 5000f)
                 val tint = Color.Red.copy(alpha = alpha)
@@ -337,20 +320,13 @@ fun FootImageDisplay(fsrLeftValues: List<Int>, fsrRightValues: List<Int>) {
             }
         }
 
-        // 오른발
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
+        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Image(
-                painter = painterResource(id = R.drawable.foot_r), // 오른발 배경
+                painter = painterResource(id = R.drawable.foot_r),
                 contentDescription = "Right Foot Base",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize()
             )
-
             val rightImages = listOf(
                 R.drawable.foot_angle_r_fsr4,
                 R.drawable.foot_angle_r_fsr5,
@@ -358,7 +334,6 @@ fun FootImageDisplay(fsrLeftValues: List<Int>, fsrRightValues: List<Int>) {
                 R.drawable.foot_angle_r_fsr7,
                 R.drawable.foot_angle_r_fsr15
             )
-
             fsrRightValues.forEachIndexed { index, value ->
                 val alpha = (value.coerceIn(0, 5000).toFloat() / 5000f)
                 val tint = Color.Blue.copy(alpha = alpha)
