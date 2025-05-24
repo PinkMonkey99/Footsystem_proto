@@ -40,8 +40,8 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 class AngleActivity : ComponentActivity() {
 
-    private val leftDeviceName = "ESP32-S3 BLE left shoe"
-    private val rightDeviceName = "ESP32-S3 BLE right shoe"
+    private val leftDeviceName = "ESP32-S3 BLE left shoes"
+    private val rightDeviceName = "ESP32-S3 BLE right shoes"
 
     private val leftServiceUUID = UUID.fromString("12345678-1234-5678-1234-56789abcdef0")
     private val leftNotifyUUID = UUID.fromString("abcdef01-1234-5678-1234-56789abcdef0")
