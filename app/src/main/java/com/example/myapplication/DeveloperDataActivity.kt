@@ -265,6 +265,9 @@ class DeveloperDataActivity : ComponentActivity() {
         leftGatt?.disconnect(); rightGatt?.disconnect()
         leftGatt?.close(); rightGatt?.close()
         isLeftConnected = false; isRightConnected = false
+
+        leftJsonText = ""
+        rightJsonText = ""
     }
 }
 
