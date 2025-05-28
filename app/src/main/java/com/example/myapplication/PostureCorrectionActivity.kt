@@ -31,6 +31,7 @@ import androidx.core.content.ContextCompat
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import org.json.JSONObject
 import java.util.*
+import androidx.compose.runtime.mutableDoubleStateOf
 
 @SuppressLint("MissingPermission")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -58,8 +59,8 @@ class PostureCorrectionActivity : ComponentActivity() {
 
     private val fsrLeft = mutableStateListOf(0, 0, 0, 0, 0)
     private val fsrRight = mutableStateListOf(0, 0, 0, 0, 0)
-    private var yawLeft by mutableStateOf(0.0)
-    private var yawRight by mutableStateOf(0.0)
+    private var yawLeft by mutableDoubleStateOf(0.0)
+    private var yawRight by mutableDoubleStateOf(0.0)
     private var squatPostureLeft by mutableStateOf("")
     private var squatPostureRight by mutableStateOf("")
 
@@ -224,16 +225,20 @@ class PostureCorrectionActivity : ComponentActivity() {
     private fun sendResetCommand() {
         val resetCommand = "reset".toByteArray()
 
-        leftWriteChar?.apply {
-            value = resetCommand
-            writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            leftGatt?.writeCharacteristic(this)
+        leftWriteChar?.let { characteristic ->
+            leftGatt?.writeCharacteristic(
+                characteristic,
+                resetCommand,
+                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            )
         }
 
-        rightWriteChar?.apply {
-            value = resetCommand
-            writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            rightGatt?.writeCharacteristic(this)
+        rightWriteChar?.let { characteristic ->
+            rightGatt?.writeCharacteristic(
+                characteristic,
+                resetCommand,
+                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            )
         }
     }
 
@@ -297,22 +302,25 @@ class PostureCorrectionActivity : ComponentActivity() {
             val writeChar = service.getCharacteristic(writeUUID)
 
             gatt.setCharacteristicNotification(notifyChar, true)
-            notifyChar.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))?.apply {
-                value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                gatt.writeDescriptor(this)
+
+            notifyChar.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))?.let { descriptor ->
+                gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
             }
 
             if (gatt.device.name == leftDeviceName) leftWriteChar = writeChar else rightWriteChar = writeChar
 
-            writeChar?.apply {
-                writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                value = "start".toByteArray()
-                gatt.writeCharacteristic(this)
+            writeChar?.let { characteristic ->
+                gatt.writeCharacteristic(
+                    characteristic,
+                    "start".toByteArray(),
+                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                )
             }
         }
 
+        @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            val raw = String(characteristic.value, Charsets.UTF_8)
+            val raw = characteristic.value?.toString(Charsets.UTF_8) ?: ""
             val end = raw.indexOf('}') + 1
             if (end > 0) {
                 try {
@@ -340,23 +348,26 @@ class PostureCorrectionActivity : ComponentActivity() {
     private fun stopMeasurement() {
         isMeasuring = false
 
-        leftWriteChar?.apply {
-            value = "stop".toByteArray()
-            writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            leftGatt?.writeCharacteristic(this)
-        }
-        rightWriteChar?.apply {
-            value = "stop".toByteArray()
-            writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            rightGatt?.writeCharacteristic(this)
+        val stopCommand = "stop".toByteArray()
+
+        leftWriteChar?.let { characteristic ->
+            leftGatt?.writeCharacteristic(characteristic, stopCommand, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
         }
 
-        leftGatt?.disconnect(); rightGatt?.disconnect()
-        leftGatt?.close(); rightGatt?.close()
-        isLeftConnected = false; isRightConnected = false
+        rightWriteChar?.let { characteristic ->
+            rightGatt?.writeCharacteristic(characteristic, stopCommand, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+        }
 
-        for (i in 0 until fsrLeft.size) fsrLeft[i] = 0
-        for (i in 0 until fsrRight.size) fsrRight[i] = 0
+        leftGatt?.disconnect()
+        rightGatt?.disconnect()
+        leftGatt?.close()
+        rightGatt?.close()
+
+        isLeftConnected = false
+        isRightConnected = false
+
+        for (i in fsrLeft.indices) fsrLeft[i] = 0
+        for (i in fsrRight.indices) fsrRight[i] = 0
         yawLeft = 0.0
         yawRight = 0.0
         squatPostureLeft = ""
@@ -368,7 +379,7 @@ class PostureCorrectionActivity : ComponentActivity() {
 fun FootOverlayWithRotation(
     fsrValues: List<Int>,
     yaw: Double,
-    squatPosture: String,
+    @Suppress("UNUSED_PARAMETER") squatPosture: String,
     isLeft: Boolean
 ) {
     val baseImage = if (isLeft) R.drawable.foot_l else R.drawable.foot_r
@@ -398,10 +409,12 @@ fun FootOverlayWithRotation(
         )
 
         fsrValues.forEachIndexed { index, value ->
-            val alpha = (value.coerceIn(0, 5000).toFloat() / 5000f)
-            val tint = if (value < 50) Color.Gray
-            else if (isLeft) Color.Red.copy(alpha = alpha)
-            else Color.Blue.copy(alpha = alpha)
+            val tint = when {
+                value < 50 -> Color.LightGray.copy(alpha = 0.2f)  // 매우 낮은 압력
+                value < 1000 -> (if (isLeft) Color.Red else Color.Blue).copy(alpha = 0.4f) // 낮음
+                value < 3000 -> (if (isLeft) Color.Red else Color.Blue).copy(alpha = 0.7f) // 중간
+                else -> (if (isLeft) Color.Red else Color.Blue).copy(alpha = 1f)  // 높음(매우 강렬)
+            }
 
             Image(
                 painter = painterResource(id = overlayImages[index]),
