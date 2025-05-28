@@ -321,13 +321,13 @@ class PostureCorrectionActivity : ComponentActivity() {
                         json.optJSONArray("fsr_left")?.let {
                             for (i in 0 until it.length()) fsrLeft[i] = it.getInt(i)
                         }
-                        yawLeft = json.optDouble("yaw_angle", 0.0)
+                        yawLeft = -json.optDouble("yaw_angle", 0.0)
                         squatPostureLeft = json.optString("squat_posture", "")
                     } else {
                         json.optJSONArray("fsr_right")?.let {
                             for (i in 0 until it.length()) fsrRight[i] = it.getInt(i)
                         }
-                        yawRight = json.optDouble("yaw_angle", 0.0)
+                        yawRight = -json.optDouble("yaw_angle", 0.0)
                         squatPostureRight = json.optString("squat_posture", "")
                     }
                 } catch (e: Exception) {
