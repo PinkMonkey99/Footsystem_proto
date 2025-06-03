@@ -22,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -87,7 +88,11 @@ class PostureCorrectionActivity : ComponentActivity() {
 
         setContent {
             MyApplicationTheme {
-                Column(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black) // 전체 배경 검정색 설정
+                ) {
 
                     // 상단 앱바 + 측정 버튼 2개
                     Column {
@@ -411,9 +416,9 @@ fun FootOverlayWithRotation(
         fsrValues.forEachIndexed { index, value ->
             val tint = when {
                 value < 50 -> Color.LightGray.copy(alpha = 0.2f)  // 매우 낮은 압력
-                value < 1000 -> (if (isLeft) Color.Red else Color.Blue).copy(alpha = 0.4f) // 낮음
-                value < 3000 -> (if (isLeft) Color.Red else Color.Blue).copy(alpha = 0.7f) // 중간
-                else -> (if (isLeft) Color.Red else Color.Blue).copy(alpha = 1f)  // 높음(매우 강렬)
+                value < 1000 -> Color.Red.copy(alpha = 0.4f) // 낮음
+                value < 3000 -> Color.Red.copy(alpha = 0.7f) // 중간
+                else -> Color.Red.copy(alpha = 1f)  // 높음
             }
 
             Image(
